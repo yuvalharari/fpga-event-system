@@ -119,3 +119,40 @@ tb_reset_controller: ALL TESTS PASSED   Time: 291 ns
    1-2 were applied. Fixed by reordering `wait` before `clk <= not clk`.
 
 ---
+
+## button_pulse — `tb_button_pulse.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `button_pulse` does:** wraps the course-provided `clean_key` (debounce,
+outputs a clean level) and `gozer` (rise/fall/change edge detector) blocks
+together to turn one raw active-low DE0 push-button into a debounced,
+single-clock-wide, active-high press pulse - the "debounced one-shot" signal
+`system_master_ctrl` needs (spec sections 17, 18.4). `clean_key`/`gozer`
+themselves are course material kept local-only in `lib/course_blocks/` (not
+in the public repo); `button_pulse.vhd` is original wiring code.
+
+**What the testbench checks** (`clk_freq`/`max_bounce_time_ms` overridden to
+500/10 so `clean_key`'s internal debounce window is 5 clocks instead of the
+real 500,000 @ 50MHz/10ms):
+- a clean press produces exactly one pulse
+- a clean release produces zero pulses
+- a bouncy press (rapid toggles before settling) still collapses to exactly
+  one pulse
+- a bouncy release produces zero pulses
+- a second clean press pulses again (confirms it isn't "stuck" after the
+  first press)
+
+**Result: ALL TESTS PASSED** — no errors, all 5 scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_button_pulse: ALL TESTS PASSED   Time: 3911 ns
+```
+
+Waveform confirmed visually: `button_n` bounces (visible narrow glitches)
+during the bouncy-press/release scenarios, while `pulse` still only fires
+once, cleanly, per genuine press.
+
+---
