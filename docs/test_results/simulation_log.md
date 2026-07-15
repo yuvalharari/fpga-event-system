@@ -156,3 +156,33 @@ during the bouncy-press/release scenarios, while `pulse` still only fires
 once, cleanly, per genuine press.
 
 ---
+
+## system_master_ctrl — `tb_system_master_ctrl.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `system_master_ctrl` does:** the system-wide SYSTEM_ON/SYSTEM_OFF
+master state (spec sections 14.1, 18.4, 19.5). BUTTON0's debounced one-shot
+pulse turns the system ON; BUTTON2's turns it OFF. A pulse that doesn't apply
+to the current state (e.g. BUTTON0 while already ON) has no effect. Power-up/
+reset default is SYSTEM_OFF (the "safe output state", spec section 16.2).
+
+**What the testbench checks** (button pulses driven directly as one-clock
+pulses - the debounce itself is verified separately in `tb_button_pulse`,
+this is a focused unit test of just the FSM logic):
+1. after reset, `system_enable_o = '0'` (SYSTEM_OFF)
+2. a BUTTON0 pulse turns it ON (`system_enable_o = '1'`)
+3. a second BUTTON0 pulse while already ON has no effect
+4. a BUTTON2 pulse turns it OFF
+5. a second BUTTON2 pulse while already OFF has no effect
+6. a second full ON/OFF cycle works (not a one-shot fluke)
+
+**Result: ALL TESTS PASSED** — no errors, all 6 checks passed, simulation
+completed and halted on its own.
+
+```
+tb_system_master_ctrl: ALL TESTS PASSED   Time: 291 ns
+```
+
+---
