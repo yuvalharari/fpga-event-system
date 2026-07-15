@@ -254,3 +254,35 @@ tb_uart_echo_test: ALL TESTS PASSED   Time: 231 ns
 ```
 
 ---
+
+## sync_fifo — `tb_sync_fifo.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `sync_fifo` does:** generic synchronous FIFO (circular buffer), reused
+for both the RX and TX byte queues (spec section 17: "sync_fifo - FIFO גנרי
+לשימוש חוזר"; section 15 memory table). Push with `wr_en`/`wr_data`, pop with
+`rd_en` (`rd_data` always shows the front of the queue), `full`/`empty`
+status, `overflow` sticky flag if a write is attempted while full.
+
+**What the testbench checks** (small depth=4 for clear boundary testing):
+1. empty/full/overflow correct right after reset
+2. single write+read round trip (value and empty/full flags)
+3. filling to exactly "full", in the right order
+4. writing while full sets the sticky overflow flag, without corrupting
+   `full`
+5. draining preserves write order (first in, first out)
+6. simultaneous read+write while partially full keeps the internal count
+   consistent (doesn't become empty/full incorrectly)
+7. pointer wraparound across more writes/reads than `depth` (10 items
+   through a depth-4 FIFO)
+
+**Result: ALL TESTS PASSED** — no errors, all 7 scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_sync_fifo: ALL TESTS PASSED   Time: 791 ns
+```
+
+---
