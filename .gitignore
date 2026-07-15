@@ -8,9 +8,10 @@ transcript
 vsim.wlf
 
 # Quartus build artifacts
-quartus/*/db/
-quartus/*/incremental_db/
-quartus/*/output_files/
+db/
+incremental_db/
+simulation/
+output_files/
 *.rpt
 *.summary
 *.smsg
@@ -19,6 +20,7 @@ quartus/*/output_files/
 *.pof
 *.qws
 *.done
+*.dpf
 
 # Claude Code local settings
 .claude/settings.local.json
