@@ -47,6 +47,8 @@ architecture sim of tb_clock_tick_gen is
 
    signal cycle : natural := 0 ; -- free running clock-edge counter, used to measure periods
 
+   signal sim_done : boolean := false ; -- set true once main_check finishes, stops the clock
+
 begin
 
    ----------------------
@@ -67,7 +69,17 @@ begin
    -------------------
    -- Clock and cycle counter --
    -------------------
-   clk <= not clk after clk_period / 2 ;
+   -- a process (not a bare concurrent assignment) so it can stop itself
+   -- once sim_done goes true - otherwise "run -all" never returns since
+   -- there would always be a pending clk toggle event queued up.
+   clk_gen : process
+   begin
+      while not sim_done loop
+         clk <= not clk ;
+         wait for clk_period / 2 ;
+      end loop ;
+      wait ;
+   end process ;
 
    process (clk)
    begin
@@ -131,6 +143,7 @@ begin
       check_period(tick_1s  , clk, period_1s  , "tick_1s"  ) ;
 
       report "tb_clock_tick_gen: ALL TESTS PASSED" severity note ;
+      sim_done <= true ; -- stop the clock so "run -all" returns
       wait ;
    end process ;
 
