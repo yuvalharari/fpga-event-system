@@ -186,3 +186,41 @@ tb_system_master_ctrl: ALL TESTS PASSED   Time: 291 ns
 ```
 
 ---
+
+## uart_tx + uart_rx loopback — `tb_uart_loopback.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `uart_tx`/`uart_rx` do:** wrap the course-provided UART engines
+(`receiver.vhd` as-is; `transmitter.vhd`, bug-fixed - see its own header
+comment for what was wrong and why) with this project's naming conventions
+and, for `uart_rx`, an extra synchronizer flip-flop stage ahead of the raw
+async `rx` input (spec section 11.3 requires at least two stages; the
+underlying `receiver.vhd` only has one internally, so this wrapper adds the
+second).
+
+**What the testbench checks** (`clk_hz`/`baud_rate` overridden to 5000/100,
+i.e. 50 clocks/bit, for a fast simulation of the same relative timing as the
+real 50MHz/9600baud case): `uart_tx`'s serial output is wired directly to
+`uart_rx`'s input (loopback). Sends 4 bytes back-to-back and checks, for
+each: `data_valid` fires, the received byte matches exactly what was sent,
+`dout_ready` asserts and then clears correctly after being acknowledged with
+`read_dout`. Bytes chosen to stress every bit transition (0x55, 0xA3) and
+both all-zero/all-one edge cases (0x00, 0xFF).
+
+**Result: ALL TESTS PASSED** — no errors, all 4 bytes round-tripped
+correctly, simulation completed and halted on its own.
+
+```
+tb_uart_loopback: ALL TESTS PASSED   Time: 41471 ns
+```
+
+4 benign warnings appeared, all at Time: 0 ps only (`"There is an
+'U'|'X'|'W'|'Z'|'-' in an arithmetic operand"`) - a well-known artifact of
+`std_logic_unsigned`-style arithmetic on signals that haven't been reset yet
+at the very first simulation instant. Not a functional issue: it appears
+exactly once (not recurring throughout the run), and the actual post-reset
+behavior is fully verified correct by the passing checks.
+
+---
