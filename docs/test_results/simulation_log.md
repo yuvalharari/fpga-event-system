@@ -224,3 +224,33 @@ exactly once (not recurring throughout the run), and the actual post-reset
 behavior is fully verified correct by the passing checks.
 
 ---
+
+## uart_echo_test — `tb_uart_echo_test.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `uart_echo_test` does:** TEMPORARY hardware bring-up block only (not
+part of the final event system) - whatever byte `uart_rx` receives, sends
+straight back out via `uart_tx`. Used to confirm the real UART link works
+end-to-end against a PC terminal, before the real text command parser +
+response builder (spec section 10) replaces it.
+
+**What the testbench checks** (drives the `rx_dout`/`rx_data_valid`/
+`tx_ready` interface directly - `uart_rx`/`uart_tx` themselves are already
+verified separately in `tb_uart_loopback.vhd`, this is a focused unit test of
+just the echo FSM):
+1. `rx_data_valid` pulse -> `rx_read_dout` acknowledges within one clock
+2. with `tx_ready` held low, `tx_write_din` must NOT fire prematurely - the
+   FSM must actually wait for the transmitter to be ready
+3. once `tx_ready` goes high, the correct byte is sent back
+4. a second, different byte works right after (not "stuck" after the first)
+
+**Result: ALL TESTS PASSED** — no errors, simulation completed and halted on
+its own.
+
+```
+tb_uart_echo_test: ALL TESTS PASSED   Time: 231 ns
+```
+
+---
