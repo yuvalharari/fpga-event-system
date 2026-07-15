@@ -1,0 +1,24 @@
+# Course-provided reference material (c) Amos Zaslavsky - not for redistribution
+lib/course_blocks/
+
+# ModelSim simulation artifacts
+work/
+*.wlf
+transcript
+vsim.wlf
+
+# Quartus build artifacts
+quartus/*/db/
+quartus/*/incremental_db/
+quartus/*/output_files/
+*.rpt
+*.summary
+*.smsg
+*.pin
+*.sof
+*.pof
+*.qws
+*.done
+
+# Claude Code local settings
+.claude/settings.local.json
