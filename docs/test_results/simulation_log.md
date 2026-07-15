@@ -54,4 +54,58 @@ that halts the clock-generator process once `main_check` finishes, so
 `run -all` now returns control immediately after "ALL TESTS PASSED". The same
 fix was applied to `tb_reset_controller.vhd` pre-emptively.
 
+**Note - second testbench bug found (via `tb_reset_controller`) and fixed:**
+the `sim_done` fix above introduced `clk <= not clk;` *before* `wait for
+clk_period/2;` inside the clock-generator process, which makes the very first
+clock edge land at time 0 (a delta cycle) instead of at `clk_period/2` like
+the original bare `clk <= not clk after clk_period/2;` did - a half-period
+phase shift versus what earlier runs assumed. This went unnoticed here
+because this testbench only measures *relative* periods between pulses, which
+aren't affected by a one-time phase shift at time 0 - but it broke the
+absolute edge-counting in `tb_reset_controller`. Fixed by swapping the order
+(`wait` before `clk <= not clk`) in both testbenches. Re-run pending
+confirmation.
+
+---
+
+## reset_controller — `tb_reset_controller.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `reset_controller` does:** power-on reset generator. The DE0 has no
+dedicated hardware reset pin routed to the FPGA (BUTTON0-2 are all reassigned
+to system-level roles by spec section 14), so this block just holds `resetN`
+low for `hold_cycles` clocks after configuration/power-up (relying on the
+FPGA's register power-up initial values) and then releases it high for good
+(spec sections 17, 20).
+
+**What the testbench checks** (`hold_cycles` overridden to 5 for a fast sim):
+- `resetN = '0'` before the first clock edge
+- `resetN` stays `'0'` through the first `hold_cycles - 1` (4) edges
+- `resetN` releases to `'1'` exactly on the 5th edge
+- `resetN` stays `'1'` afterwards for 10 more clocks (no glitching back to 0)
+
+**Result: ALL TESTS PASSED** — no errors, simulation completed and halted on
+its own.
+
+```
+tb_reset_controller: ALL TESTS PASSED   Time: 291 ns
+```
+
+**Testbench bugs found and fixed along the way (see notes on the
+`clock_tick_gen` entry above for the full explanation):**
+1. The very first check (`resetN = '0'` "at time 0") read a stale/
+   uninitialized value because it sampled before the DUT's internal signal
+   had a chance to propagate through a delta cycle. Fixed by adding
+   `wait for 1 ns;` before that first check.
+2. `assert ... severity error` alone does not stop the process or flag
+   overall failure - an earlier version of this testbench printed a false
+   "ALL TESTS PASSED" even after a real check had already failed. Fixed by
+   tracking failures in an `errors` counter and only reporting PASSED when
+   `errors = 0` (same fix applied to `tb_clock_tick_gen.vhd`).
+3. The clock-generator phase-shift bug described above caused a false
+   "released too early, at edge 4" failure on the first attempt after fixes
+   1-2 were applied. Fixed by reordering `wait` before `clk <= not clk`.
+
 ---
