@@ -75,8 +75,8 @@ begin
    clk_gen : process
    begin
       while not sim_done loop
-         clk <= not clk ;
          wait for clk_period / 2 ;
+         clk <= not clk ;
       end loop ;
       wait ;
    end process ;
@@ -103,46 +103,61 @@ begin
    -- Shared check procedure: pulse-width + period, 3 cycles --
    ------------------------------------------------------------
    main_check : process
+      variable errors : natural := 0 ;
 
-      procedure check_period ( signal   s        : in std_logic ;
-                                signal   clkin    : in std_logic ;
-                                constant expected : in natural   ;
-                                constant name      : in string    ) is
+      -- "errors" is passed inout so failures survive across all four calls
+      -- below; relying only on "assert ... severity error" is not enough,
+      -- since severity error does not stop the process by itself and a
+      -- real failure could still be followed by a false PASSED report.
+      procedure check_period ( signal   s        : in    std_logic ;
+                                signal   clkin    : in    std_logic ;
+                                constant expected : in    natural   ;
+                                constant name      : in    string    ;
+                                variable errors   : inout natural    ) is
          variable t_prev, t_now : natural ;
       begin
          -- pulse width check : must be exactly one clock cycle
          wait until rising_edge(clkin) and s = '1' ;
          t_prev := cycle ;
          wait until rising_edge(clkin) ;
-         assert s = '0'
+         if s /= '0' then
+            errors := errors + 1 ;
             report "tb_clock_tick_gen: FAIL - " & name & " stayed high for more than one clock cycle"
-            severity error ;
+               severity error ;
+         end if ;
 
          -- period check : three consecutive periods
          for i in 1 to 3 loop
             wait until rising_edge(clkin) and s = '1' ;
             t_now := cycle ;
-            assert (t_now - t_prev) = expected
+            if (t_now - t_prev) /= expected then
+               errors := errors + 1 ;
                report "tb_clock_tick_gen: FAIL - " & name & " period = " &
                       integer'image(t_now - t_prev) & " clocks, expected " &
                       integer'image(expected)
-               severity error ;
+                  severity error ;
+            end if ;
             t_prev := t_now ;
          end loop ;
 
-         report "tb_clock_tick_gen: " & name & " width+period check PASSED" severity note ;
+         report "tb_clock_tick_gen: " & name & " width+period check done" severity note ;
       end procedure ;
 
    begin
       wait until resetN = '1' ;
       wait until rising_edge(clk) ; -- let the DUT settle one cycle after reset release
 
-      check_period(tick_1us , clk, period_1us , "tick_1us" ) ;
-      check_period(tick_1ms , clk, period_1ms , "tick_1ms" ) ;
-      check_period(tick_10ms, clk, period_10ms, "tick_10ms") ;
-      check_period(tick_1s  , clk, period_1s  , "tick_1s"  ) ;
+      check_period(tick_1us , clk, period_1us , "tick_1us" , errors) ;
+      check_period(tick_1ms , clk, period_1ms , "tick_1ms" , errors) ;
+      check_period(tick_10ms, clk, period_10ms, "tick_10ms", errors) ;
+      check_period(tick_1s  , clk, period_1s  , "tick_1s"  , errors) ;
 
-      report "tb_clock_tick_gen: ALL TESTS PASSED" severity note ;
+      if errors = 0 then
+         report "tb_clock_tick_gen: ALL TESTS PASSED" severity note ;
+      else
+         report "tb_clock_tick_gen: " & integer'image(errors) & " CHECK(S) FAILED" severity error ;
+      end if ;
+
       sim_done <= true ; -- stop the clock so "run -all" returns
       wait ;
    end process ;

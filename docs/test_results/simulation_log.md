@@ -63,8 +63,18 @@ phase shift versus what earlier runs assumed. This went unnoticed here
 because this testbench only measures *relative* periods between pulses, which
 aren't affected by a one-time phase shift at time 0 - but it broke the
 absolute edge-counting in `tb_reset_controller`. Fixed by swapping the order
-(`wait` before `clk <= not clk`) in both testbenches. Re-run pending
-confirmation.
+(`wait` before `clk <= not clk`) in both testbenches. Re-run confirmed below.
+
+**Re-run after both fixes (phase + errors counter):**
+```
+tb_clock_tick_gen: tick_1us width+period check done    Time: 430 ns
+tb_clock_tick_gen: tick_1ms width+period check done    Time: 1410 ns
+tb_clock_tick_gen: tick_10ms width+period check done   Time: 5270 ns
+tb_clock_tick_gen: tick_1s width+period check done     Time: 20650 ns
+tb_clock_tick_gen: ALL TESTS PASSED                    Time: 20650 ns
+```
+Same timings as the very first (pre-bug) run - confirms the fix fully restored
+correct behaviour.
 
 ---
 
