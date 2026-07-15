@@ -286,3 +286,47 @@ tb_sync_fifo: ALL TESTS PASSED   Time: 791 ns
 ```
 
 ---
+
+## line_receiver — `tb_line_receiver.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `line_receiver` does:** builds complete ASCII text lines out of the
+byte stream popped from the RX FIFO (spec section 17; commands are lines
+terminated by CR, LF, or both together, spec section 10.1). Handles CR-only,
+LF-only, and CR+LF-together as a single terminator (the second character of
+a pair is silently swallowed, not treated as a second empty line), and lines
+longer than `max_line_length` (raises `line_error` once and discards bytes
+until the next terminator, so a garbled/oversized line doesn't corrupt what
+comes after it).
+
+**What the testbench checks** (`max_line_length` = 8, small, to make the
+overflow case easy to trigger; bytes fed through a mock read-only FIFO
+interface - a real `sync_fifo` is verified separately):
+1. `"A\n"` -> one line, length 1, "A" (LF only)
+2. `"BB\r\n"` -> one line, length 2, "BB" (CR+LF together, one terminator)
+3. `"C\rX\n"` -> two lines: "C" (CR only), then "X" (proves a non-matching
+   byte right after a terminator starts a new line, isn't swallowed)
+4. `"D\n\n"` -> "D", then an immediate empty line (length 0)
+5. `"123456789\n"` -> 9 characters into an 8-byte buffer: `line_error`
+   pulses exactly once, no `line_ready` for the garbled data
+6. `"OK\n"` right after the overflow -> a clean line, confirms recovery
+
+**Result: ALL TESTS PASSED** — no errors, all 6 scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_line_receiver: ALL TESTS PASSED   Time: 571 ns
+```
+
+**Testbench bug found and fixed:** the same class of delta-cycle race we
+already hit in `tb_reset_controller.vhd` - `expect_line`'s wait loop checked
+`line_ready` immediately after `wait until rising_edge(clk)`, without
+letting the DUT's registered outputs for that same edge settle first. This
+caused checks to intermittently catch a *later* line's pulse instead of the
+intended one, showing up as "wrong first byte" failures (content mismatches)
+even though the design itself was correct. Fixed by adding `wait for 1 ns`
+before reading `line_ready`/`line_error` in both wait loops.
+
+---
