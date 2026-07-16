@@ -6,6 +6,7 @@ work/
 *.wlf
 transcript
 vsim.wlf
+wlft*
 
 # Quartus build artifacts
 db/

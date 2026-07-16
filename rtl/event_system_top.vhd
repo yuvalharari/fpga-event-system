@@ -9,10 +9,17 @@
 -- criteria: "BUTTON0/BUTTON1/BUTTON2 are implemented and         --
 -- tested").                                                      --
 --                                                               --
--- Milestone 2: TX1/RX1 (the Add-On board's FTDI/PC debug        --
--- channel) wired to uart_tx/uart_rx with a temporary echo test  --
--- (uart_echo_test - NOT final architecture, see its own header) --
--- to confirm the real UART link works against a PC terminal.    --
+-- Milestone 2 (superseded): TX1/RX1 wired to uart_tx/uart_rx     --
+-- with a temporary echo test, to confirm the real UART link      --
+-- works against a PC terminal.                                  --
+--                                                               --
+-- Milestone 3: the temporary echo test is replaced by the real  --
+-- command chain - uart_rx -> RX sync_fifo -> line_receiver ->   --
+-- text_command_parser -> command_dispatcher -> response_builder --
+-- -> response_sender -> uart_tx - proving a real ASCII command   --
+-- (e.g. "EVT,01,03") gets a real ACK/NACK response back over the --
+-- same UART link (spec section 23, days 4-6 target: "STATUS     --
+-- ו-ACK/NACK בסיסי דרך בלוטוס'").                                 --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -74,15 +81,89 @@ architecture arc_event_system_top of event_system_top is
              tx_ready  : out std_logic                    ) ;
    end component ;
 
-   component uart_echo_test
-      port ( resetN        : in  std_logic                    ;
-             clk           : in  std_logic                    ;
-             rx_dout       : in  std_logic_vector(7 downto 0) ;
-             rx_data_valid : in  std_logic                    ;
-             rx_read_dout  : out std_logic                    ;
-             tx_din        : out std_logic_vector(7 downto 0) ;
-             tx_write_din  : out std_logic                    ;
-             tx_ready      : in  std_logic                    ) ;
+   component sync_fifo
+      generic ( data_width : positive := 8  ;
+                depth      : positive := 16 ) ;
+      port ( resetN   : in  std_logic                               ;
+             clk      : in  std_logic                               ;
+             wr_en    : in  std_logic                               ;
+             wr_data  : in  std_logic_vector(data_width-1 downto 0) ;
+             rd_en    : in  std_logic                               ;
+             rd_data  : out std_logic_vector(data_width-1 downto 0) ;
+             full     : out std_logic                               ;
+             empty    : out std_logic                               ;
+             overflow : out std_logic                               ) ;
+   end component ;
+
+   component line_receiver
+      generic ( max_line_length : positive := 32 ) ;
+      port ( resetN       : in  std_logic                                      ;
+             clk          : in  std_logic                                      ;
+             fifo_empty   : in  std_logic                                      ;
+             fifo_rd_data : in  std_logic_vector(7 downto 0)                   ;
+             fifo_rd_en   : out std_logic                                      ;
+             line_data    : out std_logic_vector(max_line_length*8-1 downto 0) ;
+             line_length  : out std_logic_vector(7 downto 0)                   ;
+             line_ready   : out std_logic                                      ;
+             line_error   : out std_logic                                       ) ;
+   end component ;
+
+   component text_command_parser
+      generic ( max_line_length : positive := 32 ) ;
+      port ( resetN      : in  std_logic                                      ;
+             clk         : in  std_logic                                      ;
+             line_data   : in  std_logic_vector(max_line_length*8-1 downto 0) ;
+             line_length : in  std_logic_vector(7 downto 0)                   ;
+             line_ready  : in  std_logic                                      ;
+             cmd_valid   : out std_logic                    ;
+             cmd_is_evt  : out std_logic                    ;
+             cmd_is_ack  : out std_logic                    ;
+             event_type  : out std_logic_vector(7 downto 0) ;
+             source_id   : out std_logic_vector(7 downto 0) ;
+             instance_id : out std_logic_vector(7 downto 0) ;
+             cmd_error      : out std_logic                    ;
+             cmd_error_code : out std_logic_vector(7 downto 0) ) ;
+   end component ;
+
+   component command_dispatcher
+      port ( resetN      : in  std_logic                    ;
+             clk         : in  std_logic                    ;
+             cmd_valid      : in  std_logic                    ;
+             cmd_is_evt     : in  std_logic                    ;
+             cmd_is_ack     : in  std_logic                    ;
+             source_id      : in  std_logic_vector(7 downto 0) ;
+             instance_id    : in  std_logic_vector(7 downto 0) ;
+             cmd_error      : in  std_logic                    ;
+             cmd_error_code : in  std_logic_vector(7 downto 0) ;
+             build_ack              : out std_logic                    ;
+             build_nack_bad_format  : out std_logic                    ;
+             build_nack_unknown     : out std_logic                    ;
+             param_byte             : out std_logic_vector(7 downto 0) ) ;
+   end component ;
+
+   component response_builder
+      generic ( max_response_length : positive := 32 ) ;
+      port ( resetN                 : in  std_logic                                          ;
+             clk                    : in  std_logic                                          ;
+             build_ack              : in  std_logic                                          ;
+             build_nack_bad_format  : in  std_logic                                          ;
+             build_nack_unknown     : in  std_logic                                          ;
+             param_byte             : in  std_logic_vector(7 downto 0)                       ;
+             resp_data              : out std_logic_vector(max_response_length*8-1 downto 0) ;
+             resp_length            : out std_logic_vector(7 downto 0)                       ;
+             resp_ready             : out std_logic                                          ) ;
+   end component ;
+
+   component response_sender
+      generic ( max_response_length : positive := 32 ) ;
+      port ( resetN       : in  std_logic                                          ;
+             clk          : in  std_logic                                          ;
+             resp_data    : in  std_logic_vector(max_response_length*8-1 downto 0) ;
+             resp_length  : in  std_logic_vector(7 downto 0)                       ;
+             resp_ready   : in  std_logic                                          ;
+             tx_din       : out std_logic_vector(7 downto 0)                       ;
+             tx_write_din : out std_logic                                          ;
+             tx_ready     : in  std_logic                                          ) ;
    end component ;
 
    signal resetN         : std_logic ;
@@ -92,10 +173,38 @@ architecture arc_event_system_top of event_system_top is
 
    signal rx_dout        : std_logic_vector(7 downto 0) ;
    signal rx_data_valid  : std_logic ;
-   signal rx_read_dout   : std_logic ;
    signal tx_din         : std_logic_vector(7 downto 0) ;
    signal tx_write_din   : std_logic ;
    signal tx_ready       : std_logic ;
+
+   signal rx_fifo_rd_en   : std_logic ;
+   signal rx_fifo_rd_data : std_logic_vector(7 downto 0) ;
+   signal rx_fifo_empty   : std_logic ;
+   signal rx_fifo_full    : std_logic ;
+   signal rx_fifo_overflow: std_logic ;
+
+   signal line_data   : std_logic_vector(32*8-1 downto 0) ;
+   signal line_length : std_logic_vector(7 downto 0) ;
+   signal line_ready  : std_logic ;
+   signal line_error  : std_logic ;
+
+   signal cmd_valid      : std_logic ;
+   signal cmd_is_evt     : std_logic ;
+   signal cmd_is_ack     : std_logic ;
+   signal event_type     : std_logic_vector(7 downto 0) ;
+   signal source_id      : std_logic_vector(7 downto 0) ;
+   signal instance_id    : std_logic_vector(7 downto 0) ;
+   signal cmd_error      : std_logic ;
+   signal cmd_error_code : std_logic_vector(7 downto 0) ;
+
+   signal build_ack             : std_logic ;
+   signal build_nack_bad_format : std_logic ;
+   signal build_nack_unknown    : std_logic ;
+   signal param_byte            : std_logic_vector(7 downto 0) ;
+
+   signal resp_data   : std_logic_vector(32*8-1 downto 0) ;
+   signal resp_length : std_logic_vector(7 downto 0) ;
+   signal resp_ready  : std_logic ;
 
 begin
 
@@ -117,14 +226,98 @@ begin
 
    LEDG0 <= system_enable ;
 
+   -----------------------------------------------------------------
+   -- command chain: uart_rx -> RX fifo -> line_receiver ->        --
+   -- text_command_parser -> command_dispatcher -> response_builder--
+   -- -> response_sender -> uart_tx                                --
+   -----------------------------------------------------------------
+
    u_uart_rx : uart_rx
       port map ( resetN     => resetN        ,
                  clk        => CLOCK_50       ,
                  rx         => RX1            ,
-                 read_dout  => rx_read_dout   ,
+                 read_dout  => '0'            , -- unused: data_valid pulse drives the RX fifo directly
                  data_valid => rx_data_valid  ,
                  dout       => rx_dout        ,
                  dout_ready => open           ) ;
+
+   u_rx_fifo : sync_fifo
+      generic map ( data_width => 8, depth => 16 )
+      port map ( resetN   => resetN         ,
+                 clk      => CLOCK_50        ,
+                 wr_en    => rx_data_valid   ,
+                 wr_data  => rx_dout         ,
+                 rd_en    => rx_fifo_rd_en   ,
+                 rd_data  => rx_fifo_rd_data ,
+                 full     => rx_fifo_full    ,
+                 empty    => rx_fifo_empty   ,
+                 overflow => rx_fifo_overflow ) ;
+
+   u_line_receiver : line_receiver
+      generic map ( max_line_length => 32 )
+      port map ( resetN       => resetN          ,
+                 clk          => CLOCK_50         ,
+                 fifo_empty   => rx_fifo_empty    ,
+                 fifo_rd_data => rx_fifo_rd_data  ,
+                 fifo_rd_en   => rx_fifo_rd_en    ,
+                 line_data    => line_data        ,
+                 line_length  => line_length      ,
+                 line_ready   => line_ready       ,
+                 line_error   => line_error       ) ;
+
+   u_parser : text_command_parser
+      generic map ( max_line_length => 32 )
+      port map ( resetN      => resetN      ,
+                 clk         => CLOCK_50     ,
+                 line_data   => line_data    ,
+                 line_length => line_length  ,
+                 line_ready  => line_ready   ,
+                 cmd_valid   => cmd_valid    ,
+                 cmd_is_evt  => cmd_is_evt   ,
+                 cmd_is_ack  => cmd_is_ack   ,
+                 event_type  => event_type   ,
+                 source_id   => source_id    ,
+                 instance_id => instance_id  ,
+                 cmd_error      => cmd_error      ,
+                 cmd_error_code => cmd_error_code ) ;
+
+   u_dispatcher : command_dispatcher
+      port map ( resetN      => resetN      ,
+                 clk         => CLOCK_50     ,
+                 cmd_valid      => cmd_valid      ,
+                 cmd_is_evt     => cmd_is_evt     ,
+                 cmd_is_ack     => cmd_is_ack     ,
+                 source_id      => source_id      ,
+                 instance_id    => instance_id    ,
+                 cmd_error      => cmd_error      ,
+                 cmd_error_code => cmd_error_code ,
+                 build_ack              => build_ack              ,
+                 build_nack_bad_format  => build_nack_bad_format   ,
+                 build_nack_unknown     => build_nack_unknown      ,
+                 param_byte             => param_byte              ) ;
+
+   u_response_builder : response_builder
+      generic map ( max_response_length => 32 )
+      port map ( resetN                 => resetN                ,
+                 clk                    => CLOCK_50               ,
+                 build_ack              => build_ack              ,
+                 build_nack_bad_format  => build_nack_bad_format  ,
+                 build_nack_unknown     => build_nack_unknown     ,
+                 param_byte             => param_byte             ,
+                 resp_data              => resp_data              ,
+                 resp_length            => resp_length            ,
+                 resp_ready             => resp_ready             ) ;
+
+   u_response_sender : response_sender
+      generic map ( max_response_length => 32 )
+      port map ( resetN       => resetN      ,
+                 clk          => CLOCK_50     ,
+                 resp_data    => resp_data    ,
+                 resp_length  => resp_length  ,
+                 resp_ready   => resp_ready   ,
+                 tx_din       => tx_din       ,
+                 tx_write_din => tx_write_din ,
+                 tx_ready     => tx_ready     ) ;
 
    u_uart_tx : uart_tx
       port map ( resetN    => resetN      ,
@@ -133,15 +326,5 @@ begin
                  write_din => tx_write_din ,
                  tx        => TX1          ,
                  tx_ready  => tx_ready     ) ;
-
-   u_echo : uart_echo_test
-      port map ( resetN        => resetN        ,
-                 clk           => CLOCK_50       ,
-                 rx_dout       => rx_dout        ,
-                 rx_data_valid => rx_data_valid  ,
-                 rx_read_dout  => rx_read_dout   ,
-                 tx_din        => tx_din         ,
-                 tx_write_din  => tx_write_din   ,
-                 tx_ready      => tx_ready       ) ;
 
 end arc_event_system_top ;

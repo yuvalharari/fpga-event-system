@@ -110,3 +110,68 @@ chain was caused by testing against the wrong COM port, nothing in the FPGA
 design or pin assignments needed to change.
 
 ---
+
+## Milestone 3 — full command chain (`uart_rx` -> `sync_fifo` -> `line_receiver` -> `text_command_parser` -> `command_dispatcher` -> `response_builder` -> `response_sender` -> `uart_tx`)
+
+**Date:** 2026-07-16
+**Tool:** Quartus II 9.1sp2 + COMSH.EXE v2.8, `termb` (binary terminal) mode.
+**Device:** Cyclone III EP3C16F484C6 (DE0 board), Add-On card on GPIO_1.
+
+**What was tested:** the temporary `uart_echo_test` block was replaced in
+`event_system_top.vhd` with the real, full text-command processing chain
+(each block already individually verified in ModelSim beforehand - see
+`simulation_log.md`): an RX `sync_fifo` (16 bytes deep) buffers bytes from
+`uart_rx`, `line_receiver` assembles them into complete CR/LF-terminated
+lines, `text_command_parser` validates and tokenizes `EVT,<type>,<source>`
+and `ACK,<instance>` commands, `command_dispatcher` maps the result to a
+response request, `response_builder` formats the ASCII reply, and
+`response_sender` streams it out through `uart_tx`, byte by byte, with a
+trailing CR+LF.
+
+**Physical test performed (via comsh, 9600/8/N/1, no flow control):**
+1. `EVT,01,03` + Enter -> expected `ACK,INSTANCE=03`
+2. `ACK,17` + Enter -> expected `ACK,INSTANCE=17`
+3. Both of the above repeated a second time in the same session (no
+   reprogram/reset in between) -> repeatability check, ruling out any
+   internal state not resetting correctly between commands.
+4. `FOO,01` + Enter (unrecognized command name) -> expected
+   `NACK,UNKNOWN_COMMAND` (the longest response currently supported, 20
+   chars + CR + LF = 22 bytes - also the response type that first exposed
+   the bug below).
+
+**Result: PASS** (after one bug found and fixed along the way, see below) -
+every scenario above produced the exact expected byte sequence, byte for
+byte, confirmed in comsh's binary terminal (`tx =>` / `rx <=` traces).
+
+**Bug found and fixed:** the very first end-to-end attempt (`EVT,01,03`, but
+mistakenly typed with embedded spaces as `EVT, 01, 03`, an 11-character line
+that correctly falls through to the "unknown command" path) came back
+corrupted - only every *other* byte of the intended `NACK,UNKNOWN_COMMAND`
+response arrived, in a precise, repeatable pattern (bytes at even positions
+of the transmission only). Root-caused to the course-provided
+`lib/course_blocks/transmitter.vhd` (already bug-fixed twice before, see its
+header): its `tx_ready` output was purely combinational off `present_state`,
+which only updates on the clock edge *after* a `write_din` is first sampled
+in `idle`. This left a one-clock window where a fast consumer sending
+several bytes back-to-back (like `response_sender`, unlike the old
+`uart_echo_test` which only ever sent one byte at a time with long natural
+gaps) could still read `tx_ready = '1'` right after its first write was
+accepted, issue a second write immediately, and lose that byte - the
+transmitter had already left `idle` and wouldn't reload `din` until back in
+`idle`. Fixed by making `tx_ready` also drop the same cycle a write is
+accepted:
+```vhdl
+tx_ready <= '0' when (present_state = idle) and (write_din = '1') and (write_armed = '1') else
+            '1' when (present_state = idle) else
+            '0';
+```
+Verified directly on hardware after the fix (re-simulation was intentionally
+skipped for this fix, per explicit instruction, in favor of direct hardware
+re-verification) - all scenarios above passed cleanly afterward, with no
+further byte loss across two full repeated test rounds.
+
+**Pin assignments:** unchanged from Milestone 2 (`TX1`=PIN_R12,
+`RX1`=PIN_T12) - this milestone added only internal logic, no new physical
+I/O.
+
+---
