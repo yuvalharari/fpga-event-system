@@ -26,6 +26,14 @@
 -- command_dispatcher's old source_id placeholder. Adds the       --
 -- NACK,UNKNOWN_EVENT / NACK,TABLE_FULL response paths (spec      --
 -- section 16, error codes 03/04).                                --
+--                                                               --
+-- Milestone 5: ACK commands now go through a real slot release   --
+-- (event_table_manager's release_req/release_done, the spec's    --
+-- ack_manager role) instead of blindly echoing instance_id -     --
+-- the table actually empties out as instances get acknowledged.  --
+-- Adds NACK,UNKNOWN_INSTANCE (project-defined, not in the spec's --
+-- error table) for an ACK naming an instance that isn't          --
+-- currently occupying any slot.                                  --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -149,12 +157,17 @@ architecture arc_event_system_top of event_system_top is
              alloc_ok           : in  std_logic                    ;
              alloc_unknown_type : in  std_logic                    ;
              alloc_instance_id  : in  std_logic_vector(7 downto 0) ;
-             build_ack              : out std_logic                    ;
-             build_nack_bad_format  : out std_logic                    ;
-             build_nack_unknown     : out std_logic                    ;
-             build_nack_unknown_evt : out std_logic                    ;
-             build_nack_table_full  : out std_logic                    ;
-             param_byte             : out std_logic_vector(7 downto 0) ) ;
+             release_req          : out std_logic                    ;
+             release_instance_id  : out std_logic_vector(7 downto 0) ;
+             release_done         : in  std_logic                    ;
+             release_ok           : in  std_logic                    ;
+             build_ack               : out std_logic                    ;
+             build_nack_bad_format   : out std_logic                    ;
+             build_nack_unknown      : out std_logic                    ;
+             build_nack_unknown_evt  : out std_logic                    ;
+             build_nack_table_full   : out std_logic                    ;
+             build_nack_unknown_inst : out std_logic                    ;
+             param_byte              : out std_logic_vector(7 downto 0) ) ;
    end component ;
 
    component event_table_manager
@@ -169,7 +182,11 @@ architecture arc_event_system_top of event_system_top is
              alloc_unknown_type : out std_logic                    ;
              alloc_instance_id  : out std_logic_vector(7 downto 0) ;
              alloc_priority     : out std_logic_vector(2 downto 0) ;
-             alloc_requires_ack : out std_logic                     ) ;
+             alloc_requires_ack : out std_logic                    ;
+             release_req         : in  std_logic                    ;
+             release_instance_id : in  std_logic_vector(7 downto 0) ;
+             release_done        : out std_logic                    ;
+             release_ok          : out std_logic                     ) ;
    end component ;
 
    component response_builder
@@ -181,6 +198,7 @@ architecture arc_event_system_top of event_system_top is
              build_nack_unknown     : in  std_logic                                          ;
              build_nack_unknown_evt : in  std_logic                                          ;
              build_nack_table_full  : in  std_logic                                          ;
+             build_nack_unknown_inst: in  std_logic                                          ;
              param_byte             : in  std_logic_vector(7 downto 0)                       ;
              resp_data              : out std_logic_vector(max_response_length*8-1 downto 0) ;
              resp_length            : out std_logic_vector(7 downto 0)                       ;
@@ -240,12 +258,18 @@ architecture arc_event_system_top of event_system_top is
    signal alloc_priority     : std_logic_vector(2 downto 0) ;
    signal alloc_requires_ack : std_logic ;
 
-   signal build_ack              : std_logic ;
-   signal build_nack_bad_format  : std_logic ;
-   signal build_nack_unknown     : std_logic ;
-   signal build_nack_unknown_evt : std_logic ;
-   signal build_nack_table_full  : std_logic ;
-   signal param_byte             : std_logic_vector(7 downto 0) ;
+   signal release_req         : std_logic ;
+   signal release_instance_id : std_logic_vector(7 downto 0) ;
+   signal release_done        : std_logic ;
+   signal release_ok          : std_logic ;
+
+   signal build_ack               : std_logic ;
+   signal build_nack_bad_format   : std_logic ;
+   signal build_nack_unknown      : std_logic ;
+   signal build_nack_unknown_evt  : std_logic ;
+   signal build_nack_table_full   : std_logic ;
+   signal build_nack_unknown_inst : std_logic ;
+   signal param_byte              : std_logic_vector(7 downto 0) ;
 
    signal resp_data   : std_logic_vector(32*8-1 downto 0) ;
    signal resp_length : std_logic_vector(7 downto 0) ;
@@ -344,12 +368,17 @@ begin
                  alloc_ok           => alloc_ok           ,
                  alloc_unknown_type => alloc_unknown_type ,
                  alloc_instance_id  => alloc_instance_id  ,
-                 build_ack              => build_ack              ,
-                 build_nack_bad_format  => build_nack_bad_format   ,
-                 build_nack_unknown     => build_nack_unknown      ,
-                 build_nack_unknown_evt => build_nack_unknown_evt  ,
-                 build_nack_table_full  => build_nack_table_full   ,
-                 param_byte             => param_byte              ) ;
+                 release_req          => release_req          ,
+                 release_instance_id  => release_instance_id  ,
+                 release_done         => release_done         ,
+                 release_ok           => release_ok           ,
+                 build_ack               => build_ack               ,
+                 build_nack_bad_format   => build_nack_bad_format    ,
+                 build_nack_unknown      => build_nack_unknown       ,
+                 build_nack_unknown_evt  => build_nack_unknown_evt   ,
+                 build_nack_table_full   => build_nack_table_full    ,
+                 build_nack_unknown_inst => build_nack_unknown_inst  ,
+                 param_byte              => param_byte               ) ;
 
    u_event_table : event_table_manager
       generic map ( event_slots => 8 )
@@ -363,7 +392,11 @@ begin
                  alloc_unknown_type => alloc_unknown_type  ,
                  alloc_instance_id  => alloc_instance_id   ,
                  alloc_priority     => alloc_priority      ,
-                 alloc_requires_ack => alloc_requires_ack  ) ;
+                 alloc_requires_ack => alloc_requires_ack  ,
+                 release_req         => release_req         ,
+                 release_instance_id => release_instance_id ,
+                 release_done        => release_done        ,
+                 release_ok          => release_ok          ) ;
 
    u_response_builder : response_builder
       generic map ( max_response_length => 32 )
@@ -374,6 +407,7 @@ begin
                  build_nack_unknown     => build_nack_unknown     ,
                  build_nack_unknown_evt => build_nack_unknown_evt ,
                  build_nack_table_full  => build_nack_table_full  ,
+                 build_nack_unknown_inst=> build_nack_unknown_inst,
                  param_byte             => param_byte             ,
                  resp_data              => resp_data              ,
                  resp_length            => resp_length            ,
