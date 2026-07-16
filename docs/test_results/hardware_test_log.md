@@ -214,3 +214,49 @@ return `NACK,TABLE_FULL` until a reset - not yet re-tested on hardware in
 this round, deferred until `ack_manager`/release logic exists.
 
 ---
+
+## Milestone 6 — BUTTON1 full_reset
+
+**Date:** 2026-07-16
+**Tool:** Quartus II 9.1sp2 + COMSH.EXE v2.8, `termb` mode.
+**Device:** Cyclone III EP3C16F484C6 (DE0 board), Add-On card on GPIO_1.
+
+**What was tested:** `BUTTON1` wired to a new `button_pulse` instance,
+driving `event_table_manager`'s new `full_reset` input (spec section
+14.2.1) - clears the entire event table in one clock on a debounced
+BUTTON1 press, without resetting the `instance_id` counter or touching
+`SYSTEM_ON`/`SYSTEM_OFF`.
+
+**Pin assignment added** (`quartus/top_pins.tcl`): `BUTTON1`=PIN_G3,
+3.3-V LVTTL (same source/confidence as BUTTON0/BUTTON2's existing
+assignments).
+
+**Physical test performed (via comsh, 9600/8/N/1, no flow control):**
+1. Sent `EVT,01,03` eight times in a row -> `ACK,INSTANCE=00` through
+   `ACK,INSTANCE=07`, filling all 8 slots.
+2. Sent `EVT,01,03` a 9th time -> `NACK,TABLE_FULL`, confirming the table
+   was genuinely full.
+3. Pressed BUTTON1 physically on the DE0 board.
+4. Sent `EVT,01,03` again -> `ACK,INSTANCE=08` (succeeded immediately,
+   proving the table was cleared - AND the id continued from 08 rather
+   than resetting to 00, proving the instance_id counter was left
+   running, exactly as designed).
+
+**Result: PASS** - all four steps matched expectations exactly, confirmed
+in comsh's binary terminal (`tx =>` / `rx <=` traces).
+
+**Issue found along the way (tooling, not the FPGA design):** investigated
+`comsh`'s `TX`/`TERM` commands as a more convenient alternative to typing
+character-by-character in `termb`. Found: `TX <string>` does not append a
+CR terminator, which left a stray unterminated line sitting in
+`line_receiver`'s buffer and corrupted the next command (got
+`NACK,UNKNOWN_COMMAND` for a well-formed `EVT,01,03` because it had been
+silently concatenated with the leftover text). `TERM` (dumb text terminal
+mode) hit the same "Temporary Setting of XON/XOFF Input flow to: 1" quirk
+already seen with `termb` in Milestone 2, and blocked keyboard input;
+switching `TERMSET` options didn't help since none of them control
+XON/XOFF (that's likely `XFLOW`, not yet tried). Resolution: kept using
+`termb` character-by-character, which is proven and reliable - the
+convenience commands are not required for correctness.
+
+---
