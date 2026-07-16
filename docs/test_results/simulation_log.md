@@ -370,3 +370,33 @@ Fixed by checking right after the first (triggering) edge settles, not a
 second edge later.
 
 ---
+
+## response_builder — `tb_response_builder.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `response_builder` does:** formats text ACK/NACK responses (spec
+sections 17, 10.2). Reduced initial scope, matching `text_command_parser`'s
+current scope: `build_ack` -> `"ACK,INSTANCE=<hex>"`, `build_nack_bad_format`
+-> `"NACK,BAD_FORMAT"`, `build_nack_unknown` -> `"NACK,UNKNOWN_COMMAND"`.
+More response types (STARTED, PREEMPTED, STATUS, ...) will be added once the
+corresponding upstream blocks exist.
+
+**What the testbench checks:** every single byte of each formatted response
+(not just a couple of spot checks - the text tables were typed out by hand,
+character by character, so full coverage matters here):
+1. `build_ack`, param=0x17 -> `"ACK,INSTANCE=17"` (15 chars)
+2. `build_ack`, param=0xAB -> `"ACK,INSTANCE=AB"` (hex letters, not just
+   digits)
+3. `build_nack_bad_format` -> `"NACK,BAD_FORMAT"` (15 chars)
+4. `build_nack_unknown` -> `"NACK,UNKNOWN_COMMAND"` (20 chars)
+
+**Result: ALL TESTS PASSED** — no errors, all 4 scenarios (every byte of
+each) passed, simulation completed and halted on its own.
+
+```
+tb_response_builder: ALL TESTS PASSED   Time: 211 ns
+```
+
+---
