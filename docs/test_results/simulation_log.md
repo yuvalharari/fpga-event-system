@@ -330,3 +330,43 @@ even though the design itself was correct. Fixed by adding `wait for 1 ns`
 before reading `line_ready`/`line_error` in both wait loops.
 
 ---
+
+## text_command_parser — `tb_text_command_parser.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `text_command_parser` does:** tokenizes and validates ASCII commands
+from a complete line (spec sections 17, 10.1, 19.1). Reduced initial scope
+(vertical slice, spec section 3.3): only `EVT,<type>,<source>` (fixed 9
+characters) and `ACK,<instance>` (fixed 6 characters) are supported so far,
+both hex byte fields. A general tokenizer for the full 12-command protocol
+will replace this once the basic path is proven end to end. Reports error
+code 01 (bad format) or 02 (unknown command) per spec section 16.
+
+**What the testbench checks** (`line_data`/`line_length`/`line_ready` driven
+directly - `line_receiver` is verified separately):
+1. valid `"EVT,01,03"` -> `cmd_is_evt`, `event_type=0x01`, `source_id=0x03`
+2. valid `"ACK,17"` -> `cmd_is_ack`, `instance_id=0x17`
+3. `"XYZ,01,02"` (unknown command) -> error code 02
+4. `"EVT,ZZ,03"` (bad hex in field 1) -> error code 01
+5. `"EVT,01,ZZ"` (bad hex in field 2) -> error code 01
+6. `"EVT,01"` (wrong length for EVT) -> rejected
+7. `"EVT,ab,cd"` (lowercase hex digits) -> accepted, same as uppercase
+
+**Result: ALL TESTS PASSED** — no errors, all 7 scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_text_command_parser: ALL TESTS PASSED   Time: 211 ns
+```
+
+**Testbench bug found and fixed:** `feed_line` waited for *two* clock edges
+before checking `cmd_valid`/`cmd_error` - but those are one-clock pulses that
+rise on the first edge and are cleared again by the DUT's own default
+assignment on the second edge, so every check was reading the pulse *after*
+it had already ended (all 7 scenarios failed the same way as a result).
+Fixed by checking right after the first (triggering) edge settles, not a
+second edge later.
+
+---
