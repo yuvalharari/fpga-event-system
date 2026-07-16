@@ -7,6 +7,9 @@
 --   build_nack_unknown      -> "NACK,UNKNOWN_COMMAND"  (err 02) --
 --   build_nack_unknown_evt  -> "NACK,UNKNOWN_EVENT"    (err 03) --
 --   build_nack_table_full   -> "NACK,TABLE_FULL"       (err 04) --
+--   build_nack_unknown_inst -> "NACK,UNKNOWN_INSTANCE" (not in  --
+--     the spec's error table - our own addition, see             --
+--     command_dispatcher's header for why)                       --
 -- More response types (STARTED, PREEMPTED, STATUS, ...) will be --
 -- added once the corresponding upstream blocks exist.            --
 ----------------------------------------------------------------
@@ -23,6 +26,7 @@ entity response_builder is
           build_nack_unknown     : in  std_logic                                          ; -- request pulse
           build_nack_unknown_evt : in  std_logic := '0'                                   ; -- request pulse
           build_nack_table_full  : in  std_logic := '0'                                   ; -- request pulse
+          build_nack_unknown_inst: in  std_logic := '0'                                   ; -- request pulse
           param_byte             : in  std_logic_vector(7 downto 0)                       ; -- instance id, for ACK
           resp_data              : out std_logic_vector(max_response_length*8-1 downto 0) ;
           resp_length            : out std_logic_vector(7 downto 0)                       ;
@@ -165,6 +169,32 @@ begin
             resp_buf(13) <= x"4C" ; -- L
             resp_buf(14) <= x"4C" ; -- L
             resp_length  <= x"0F" ; -- 15
+            resp_ready   <= '1' ;
+
+         elsif build_nack_unknown_inst = '1' then
+            -- "NACK,UNKNOWN_INSTANCE" = 21 chars
+            resp_buf(0)  <= x"4E" ; -- N
+            resp_buf(1)  <= x"41" ; -- A
+            resp_buf(2)  <= x"43" ; -- C
+            resp_buf(3)  <= x"4B" ; -- K
+            resp_buf(4)  <= x"2C" ; -- ,
+            resp_buf(5)  <= x"55" ; -- U
+            resp_buf(6)  <= x"4E" ; -- N
+            resp_buf(7)  <= x"4B" ; -- K
+            resp_buf(8)  <= x"4E" ; -- N
+            resp_buf(9)  <= x"4F" ; -- O
+            resp_buf(10) <= x"57" ; -- W
+            resp_buf(11) <= x"4E" ; -- N
+            resp_buf(12) <= x"5F" ; -- _
+            resp_buf(13) <= x"49" ; -- I
+            resp_buf(14) <= x"4E" ; -- N
+            resp_buf(15) <= x"53" ; -- S
+            resp_buf(16) <= x"54" ; -- T
+            resp_buf(17) <= x"41" ; -- A
+            resp_buf(18) <= x"4E" ; -- N
+            resp_buf(19) <= x"43" ; -- C
+            resp_buf(20) <= x"45" ; -- E
+            resp_length  <= x"15" ; -- 21
             resp_ready   <= '1' ;
          end if ;
       end if ;

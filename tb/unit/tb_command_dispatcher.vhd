@@ -2,26 +2,32 @@
 -- tb_command_dispatcher : self-checking testbench for           --
 -- command_dispatcher (spec section 21).                         --
 --                                                               --
--- command_dispatcher now drives a real allocation handshake     --
--- with event_table_manager for EVT commands, so this testbench  --
--- instantiates a REAL event_table_manager alongside the DUT     --
--- (already verified standalone in tb_event_table_manager) -     --
--- this checks the actual integration contract between the two   --
--- blocks, not a guessed mock of event_table_manager's timing.   --
+-- command_dispatcher now drives real allocation and release      --
+-- handshakes with event_table_manager for EVT and ACK commands,  --
+-- so this testbench instantiates a REAL event_table_manager      --
+-- alongside the DUT (already verified standalone in               --
+-- tb_event_table_manager) - this checks the actual integration   --
+-- contract between the two blocks, not a guessed mock of         --
+-- event_table_manager's timing.                                  --
 --                                                                --
 -- Scenarios:                                                    --
---   1) cmd_valid+cmd_is_ack, instance_id=0x17 -> build_ack,      --
---      param_byte=0x17 (single cycle, no allocation involved)   --
---   2) cmd_error, code=0x01 -> build_nack_bad_format             --
---   3) cmd_error, code=0x02 -> build_nack_unknown                --
---   4) EVT, event_type=01 (LIFE_THREATENING_EMERGENCY) -> real   --
+--   1) cmd_error, code=0x01 -> build_nack_bad_format             --
+--   2) cmd_error, code=0x02 -> build_nack_unknown                --
+--   3) EVT, event_type=01 (LIFE_THREATENING_EMERGENCY) -> real   --
 --      allocation succeeds, build_ack, param_byte=instance_id=0 --
---   5) EVT, event_type=07 (MEDICATION_MISSED) -> succeeds,       --
+--   4) EVT, event_type=07 (MEDICATION_MISSED) -> succeeds,       --
 --      param_byte=instance_id=1                                 --
---   6) EVT, event_type=0D (not in the catalog) ->                --
+--   5) EVT, event_type=0D (not in the catalog) ->                --
 --      build_nack_unknown_evt                                   --
---   7) fill the remaining 6 slots (event_slots=8), then a 9th    --
---      EVT -> build_nack_table_full                              --
+--   6) ACK, instance_id=0 (real, just allocated) -> real         --
+--      release succeeds, build_ack, param_byte=0, slot freed     --
+--   7) ACK, instance_id=0 again (already released) ->            --
+--      build_nack_unknown_inst                                  --
+--   8) ACK, instance_id=99 (never allocated) ->                  --
+--      build_nack_unknown_inst                                  --
+--   9) fill the remaining 7 slots (only instance_id=1 still       --
+--      occupies a slot after step 6), then a 9th EVT ->          --
+--      build_nack_table_full                                     --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -55,12 +61,18 @@ architecture sim of tb_command_dispatcher is
    signal alloc_priority     : std_logic_vector(2 downto 0) ;
    signal alloc_requires_ack : std_logic ;
 
-   signal build_ack             : std_logic ;
-   signal build_nack_bad_format : std_logic ;
-   signal build_nack_unknown    : std_logic ;
-   signal build_nack_unknown_evt: std_logic ;
-   signal build_nack_table_full : std_logic ;
-   signal param_byte            : std_logic_vector(7 downto 0) ;
+   signal release_req         : std_logic ;
+   signal release_instance_id : std_logic_vector(7 downto 0) ;
+   signal release_done        : std_logic ;
+   signal release_ok          : std_logic ;
+
+   signal build_ack              : std_logic ;
+   signal build_nack_bad_format  : std_logic ;
+   signal build_nack_unknown     : std_logic ;
+   signal build_nack_unknown_evt : std_logic ;
+   signal build_nack_table_full  : std_logic ;
+   signal build_nack_unknown_inst: std_logic ;
+   signal param_byte             : std_logic_vector(7 downto 0) ;
 
    signal sim_done : boolean := false ;
 
@@ -74,9 +86,12 @@ begin
                  alloc_req => alloc_req, alloc_event_type => alloc_event_type, alloc_source_id => alloc_source_id,
                  alloc_done => alloc_done, alloc_ok => alloc_ok, alloc_unknown_type => alloc_unknown_type,
                  alloc_instance_id => alloc_instance_id,
+                 release_req => release_req, release_instance_id => release_instance_id,
+                 release_done => release_done, release_ok => release_ok,
                  build_ack => build_ack, build_nack_bad_format => build_nack_bad_format,
                  build_nack_unknown => build_nack_unknown, build_nack_unknown_evt => build_nack_unknown_evt,
-                 build_nack_table_full => build_nack_table_full, param_byte => param_byte ) ;
+                 build_nack_table_full => build_nack_table_full, build_nack_unknown_inst => build_nack_unknown_inst,
+                 param_byte => param_byte ) ;
 
    table : entity work.event_table_manager
       generic map ( event_slots => 8 )
@@ -84,7 +99,9 @@ begin
                  alloc_req => alloc_req, event_type => alloc_event_type, source_id => alloc_source_id,
                  alloc_done => alloc_done, alloc_ok => alloc_ok, alloc_unknown_type => alloc_unknown_type,
                  alloc_instance_id => alloc_instance_id, alloc_priority => alloc_priority,
-                 alloc_requires_ack => alloc_requires_ack ) ;
+                 alloc_requires_ack => alloc_requires_ack,
+                 release_req => release_req, release_instance_id => release_instance_id,
+                 release_done => release_done, release_ok => release_ok ) ;
 
    clk_gen : process
    begin
@@ -104,9 +121,10 @@ begin
          wait for 1 ns ; -- let this edge's registered outputs settle
       end procedure ;
 
-      -- EVT commands take 2 extra clock cycles: one for command_dispatcher
-      -- to issue alloc_req, one for event_table_manager to respond with
-      -- alloc_done, one for command_dispatcher to register build_ack/nack.
+      -- EVT/ACK commands take 2 extra clock cycles: one for command_dispatcher
+      -- to issue alloc_req/release_req, one for event_table_manager to
+      -- respond with alloc_done/release_done, one for command_dispatcher to
+      -- register the build_ack/nack response.
       procedure send_evt ( constant t : std_logic_vector(7 downto 0) ; constant s : std_logic_vector(7 downto 0) ) is
       begin
          event_type <= t ;
@@ -121,6 +139,19 @@ begin
          wait for 1 ns ;
       end procedure ;
 
+      procedure send_ack ( constant id : std_logic_vector(7 downto 0) ) is
+      begin
+         instance_id <= id ;
+         cmd_is_ack  <= '1' ;
+         cmd_valid   <= '1' ;
+         wait until rising_edge(clk) ; -- dispatcher captures cmd_valid, issues release_req
+         cmd_valid  <= '0' ;
+         cmd_is_ack <= '0' ;
+         wait until rising_edge(clk) ; -- event_table_manager processes release_req
+         wait until rising_edge(clk) ; -- dispatcher registers the build_* response
+         wait for 1 ns ;
+      end procedure ;
+
    begin
       resetN <= '0' ;
       wait for clk_period * 3 ;
@@ -128,23 +159,8 @@ begin
       wait until rising_edge(clk) ;
 
       ------------------------------------------------------------
-      -- 1) ACK success (unchanged, single-cycle path)
+      -- 1) error code 01 -> bad format
       ------------------------------------------------------------
-      cmd_valid   <= '1' ;
-      cmd_is_ack  <= '1' ;
-      instance_id <= x"17" ;
-      pulse_clock ;
-      cmd_valid  <= '0' ;
-      cmd_is_ack <= '0' ;
-      if build_ack /= '1' or param_byte /= x"17" then
-         errors := errors + 1 ;
-         report "tb_command_dispatcher: FAIL - ACK success did not produce build_ack with instance_id" severity error ;
-      end if ;
-
-      ------------------------------------------------------------
-      -- 2) error code 01 -> bad format
-      ------------------------------------------------------------
-      wait until rising_edge(clk) ;
       cmd_error      <= '1' ;
       cmd_error_code <= x"01" ;
       pulse_clock ;
@@ -155,7 +171,7 @@ begin
       end if ;
 
       ------------------------------------------------------------
-      -- 3) error code 02 -> unknown command
+      -- 2) error code 02 -> unknown command
       ------------------------------------------------------------
       wait until rising_edge(clk) ;
       cmd_error      <= '1' ;
@@ -168,7 +184,7 @@ begin
       end if ;
 
       ------------------------------------------------------------
-      -- 4) EVT success - real allocation, instance_id=0
+      -- 3) EVT success - real allocation, instance_id=0
       ------------------------------------------------------------
       wait until rising_edge(clk) ;
       send_evt( x"01", x"05" ) ;
@@ -178,7 +194,7 @@ begin
       end if ;
 
       ------------------------------------------------------------
-      -- 5) EVT success - real allocation, instance_id=1
+      -- 4) EVT success - real allocation, instance_id=1
       ------------------------------------------------------------
       wait until rising_edge(clk) ;
       send_evt( x"07", x"02" ) ;
@@ -188,7 +204,7 @@ begin
       end if ;
 
       ------------------------------------------------------------
-      -- 6) EVT with unrecognized event_type
+      -- 5) EVT with unrecognized event_type
       ------------------------------------------------------------
       wait until rising_edge(clk) ;
       send_evt( x"0D", x"03" ) ;
@@ -198,9 +214,40 @@ begin
       end if ;
 
       ------------------------------------------------------------
-      -- 7) fill the remaining 6 slots, then a 9th EVT -> table full
+      -- 6) ACK instance_id=0 - real release, frees the slot
       ------------------------------------------------------------
-      for n in 2 to 7 loop
+      wait until rising_edge(clk) ;
+      send_ack( x"00" ) ;
+      if build_ack /= '1' or param_byte /= x"00" then
+         errors := errors + 1 ;
+         report "tb_command_dispatcher: FAIL - ACK for instance_id=0 did not produce build_ack" severity error ;
+      end if ;
+
+      ------------------------------------------------------------
+      -- 7) ACK instance_id=0 again - already released
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      send_ack( x"00" ) ;
+      if build_nack_unknown_inst /= '1' then
+         errors := errors + 1 ;
+         report "tb_command_dispatcher: FAIL - repeat ACK for instance_id=0 did not produce build_nack_unknown_inst" severity error ;
+      end if ;
+
+      ------------------------------------------------------------
+      -- 8) ACK instance_id=99 - never allocated
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      send_ack( x"63" ) ; -- 0x63 = 99
+      if build_nack_unknown_inst /= '1' then
+         errors := errors + 1 ;
+         report "tb_command_dispatcher: FAIL - ACK for instance_id=99 did not produce build_nack_unknown_inst" severity error ;
+      end if ;
+
+      ------------------------------------------------------------
+      -- 9) fill the remaining 7 slots (only instance_id=1 still
+      -- occupies a slot at this point), then one more EVT -> table full
+      ------------------------------------------------------------
+      for n in 1 to 7 loop
          wait until rising_edge(clk) ;
          send_evt( x"0C", x"00" ) ;
          if build_ack /= '1' then
@@ -213,7 +260,7 @@ begin
       send_evt( x"01", x"09" ) ;
       if build_nack_table_full /= '1' then
          errors := errors + 1 ;
-         report "tb_command_dispatcher: FAIL - 9th EVT did not produce build_nack_table_full" severity error ;
+         report "tb_command_dispatcher: FAIL - 9th (overall) live EVT did not produce build_nack_table_full" severity error ;
       end if ;
 
       if errors = 0 then

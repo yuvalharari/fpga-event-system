@@ -629,3 +629,67 @@ tb_event_table_manager: ALL TESTS PASSED   Time: 651 ns
 ```
 
 ---
+
+## response_builder (update 2) — `tb_response_builder.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** added `build_nack_unknown_inst` -> `"NACK,UNKNOWN_INSTANCE"`
+(21 chars) - a project-defined response, not in the spec's error table,
+used when an ACK command names an `instance_id` that doesn't currently
+occupy any slot in `event_table_manager` (see `command_dispatcher`'s
+header for the reasoning).
+
+**What the testbench checks:** all 6 previous scenarios unchanged, plus a
+new scenario 7: `build_nack_unknown_inst` -> `"NACK,UNKNOWN_INSTANCE"`,
+checked byte for byte like every other response.
+
+**Result: ALL TESTS PASSED** — no errors, all 7 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_response_builder: ALL TESTS PASSED   Time: 331 ns
+```
+
+---
+
+## command_dispatcher (update 2) — `tb_command_dispatcher.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** ACK commands now go through a real release request/
+response handshake with `event_table_manager` (the spec's `ack_manager`
+role) instead of blindly echoing back `instance_id`. A three-state FSM
+(IDLE / WAIT_ALLOC / WAIT_RELEASE) issues `release_req` and waits for
+`release_done`: success frees the slot and answers `ACK,INSTANCE=<id>`;
+failure (no slot currently holds that `instance_id`) answers the new
+`NACK,UNKNOWN_INSTANCE`.
+
+This testbench again instantiates a REAL `event_table_manager` alongside
+the DUT to check the actual integration contract, not a mock.
+
+**What the testbench checks (9 scenarios, reordered from the previous
+version since ACK now depends on real table state):**
+1. `cmd_error` code 0x01 -> `build_nack_bad_format`.
+2. `cmd_error` code 0x02 -> `build_nack_unknown`.
+3. EVT, `event_type=01` -> real allocation succeeds, `instance_id=0`.
+4. EVT, `event_type=07` -> succeeds, `instance_id=1`.
+5. EVT, `event_type=0D` (not in the catalog) -> `build_nack_unknown_evt`.
+6. ACK, `instance_id=0` (real, just allocated) -> real release succeeds,
+   `build_ack`, `param_byte=0`, slot freed.
+7. ACK, `instance_id=0` again (already released) ->
+   `build_nack_unknown_inst`.
+8. ACK, `instance_id=99` (never allocated) -> `build_nack_unknown_inst`.
+9. Fill the remaining 7 slots (only `instance_id=1` still occupies a slot
+   after step 6), then one more EVT -> `build_nack_table_full`.
+
+**Result: ALL TESTS PASSED** — no errors, all 9 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_command_dispatcher: ALL TESTS PASSED   Time: 1251 ns
+```
+
+---
