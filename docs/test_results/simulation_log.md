@@ -400,3 +400,32 @@ tb_response_builder: ALL TESTS PASSED   Time: 211 ns
 ```
 
 ---
+
+## response_sender — `tb_response_sender.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `response_sender` does:** takes a formatted response from
+`response_builder` (up to `max_response_length` bytes) and sends it out,
+byte by byte, through a `uart_tx` (spec sections 17, 18.3 ready/valid
+handshake), waiting for `tx_ready` between each byte, then appending CR+LF
+so the response shows as its own line on the receiving terminal.
+
+**What the testbench checks:** a mock `tx_ready` generator (goes busy for a
+few clocks after every `tx_write_din` pulse, mimicking a real `uart_tx`
+without needing real baud timing - `uart_tx` itself is verified separately)
+plus a capture buffer recording every byte actually sent, compared against
+the expected sequence:
+1. a short 2-byte response -> exactly those 2 bytes + CR + LF (4 total)
+2. a 20-byte response (matching `NACK,UNKNOWN_COMMAND`'s length) -> all 20
+   bytes + CR + LF (22 total), in the right order
+
+**Result: ALL TESTS PASSED** — no errors, both scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_response_sender: ALL TESTS PASSED   Time: 1611 ns
+```
+
+---
