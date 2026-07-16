@@ -16,6 +16,14 @@
 --   5) 9th allocation -> table full (alloc_ok='0')                --
 --   6) a second attempt right after -> still table full           --
 --      (idempotent, no state corruption on a failed request)      --
+--   7) release instance_id=3 (a slot that IS occupied) ->          --
+--      release_ok='1', frees that slot                            --
+--   8) allocate again -> succeeds now that a slot is free, gets a --
+--      NEW instance_id=8 (the counter keeps climbing, id 3 is not --
+--      reused)                                                    --
+--   9) release instance_id=3 again -> release_ok='0' (already      --
+--      released, no longer occupies any slot)                     --
+--  10) release instance_id=99 (never allocated) -> release_ok='0' --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -42,6 +50,11 @@ architecture sim of tb_event_table_manager is
    signal alloc_priority     : std_logic_vector(2 downto 0) ;
    signal alloc_requires_ack : std_logic ;
 
+   signal release_req         : std_logic := '0' ;
+   signal release_instance_id : std_logic_vector(7 downto 0) := (others => '0') ;
+   signal release_done        : std_logic ;
+   signal release_ok          : std_logic ;
+
    signal sim_done : boolean := false ;
 
 begin
@@ -52,7 +65,9 @@ begin
                  alloc_req => alloc_req, event_type => event_type, source_id => source_id,
                  alloc_done => alloc_done, alloc_ok => alloc_ok, alloc_unknown_type => alloc_unknown_type,
                  alloc_instance_id => alloc_instance_id, alloc_priority => alloc_priority,
-                 alloc_requires_ack => alloc_requires_ack ) ;
+                 alloc_requires_ack => alloc_requires_ack,
+                 release_req => release_req, release_instance_id => release_instance_id,
+                 release_done => release_done, release_ok => release_ok ) ;
 
    clk_gen : process
    begin
@@ -135,6 +150,27 @@ begin
          end if ;
       end procedure ;
 
+      procedure request_release ( constant id : std_logic_vector(7 downto 0) ) is
+      begin
+         release_instance_id <= id ;
+         release_req         <= '1' ;
+         wait until rising_edge(clk) ;
+         wait for 1 ns ; -- let this edge's registered outputs settle
+         release_req <= '0' ;
+      end procedure ;
+
+      procedure expect_release ( constant exp_ok : std_logic ; constant name : string ) is
+      begin
+         if release_done /= '1' then
+            errors := errors + 1 ;
+            report "tb_event_table_manager: FAIL - " & name & " - release_done did not pulse" severity error ;
+         end if ;
+         if release_ok /= exp_ok then
+            errors := errors + 1 ;
+            report "tb_event_table_manager: FAIL - " & name & " - wrong release_ok" severity error ;
+         end if ;
+      end procedure ;
+
    begin
       resetN <= '0' ;
       wait for clk_period * 3 ;
@@ -185,6 +221,34 @@ begin
       wait until rising_edge(clk) ;
       request_alloc( x"01", x"0A" ) ;
       expect_table_full( "10th alloc (still full, idempotent)" ) ;
+
+      ------------------------------------------------------------
+      -- 7) release instance_id=3 (occupies a slot) -> freed
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      request_release( x"03" ) ;
+      expect_release( '1', "release instance_id=3 (occupied)" ) ;
+
+      ------------------------------------------------------------
+      -- 8) allocate again - a slot is free now, gets NEW instance_id=8
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      request_alloc( x"01", x"0B" ) ;
+      expect_success( x"08", "111", '1', "alloc after release (new instance_id=8)" ) ;
+
+      ------------------------------------------------------------
+      -- 9) release instance_id=3 again - no longer occupies any slot
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      request_release( x"03" ) ;
+      expect_release( '0', "release instance_id=3 again (already released)" ) ;
+
+      ------------------------------------------------------------
+      -- 10) release instance_id=99 - never allocated
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      request_release( x"63" ) ; -- 0x63 = 99
+      expect_release( '0', "release instance_id=99 (never allocated)" ) ;
 
       if errors = 0 then
          report "tb_event_table_manager: ALL TESTS PASSED" severity note ;

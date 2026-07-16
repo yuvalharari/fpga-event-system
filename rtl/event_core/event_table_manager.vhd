@@ -1,27 +1,29 @@
 ----------------------------------------------------------------
--- event_table_manager : allocates real event instances (spec    --
--- section 7.2/8.1, FSM section 19.2).                            --
+-- event_table_manager : allocates and releases real event        --
+-- instances (spec section 7.2/8.1, FSM section 19.2).             --
 --                                                                --
 -- Reduced initial scope (vertical slice, matching the approach   --
 -- used for text_command_parser/command_dispatcher so far):       --
---   - only ALLOCATION is implemented (SEARCH_FREE -> LOAD_       --
---     DEFINITION -> WRITE_SLOT -> RESPOND, collapsed into a      --
---     single clock cycle since event_slots is small enough for   --
---     a combinational free-slot search).                         --
+--   - ALLOCATION (SEARCH_FREE -> LOAD_DEFINITION -> WRITE_SLOT -> --
+--     RESPOND) and RELEASE (SEARCH by instance_id -> CANCEL_SCAN  --
+--     -> RESPOND) are implemented, both collapsed into a single   --
+--     clock cycle since event_slots is small enough for a         --
+--     combinational search.                                       --
 --   - NOT implemented yet: duplicate_detector / MERGE / REPLACE  --
---     / ESCALATE policies, releasing a slot (CANCEL_SCAN), ACK-  --
---     driven state transitions (that is ack_manager's job, not   --
---     built yet), PENDING -> ACTIVE transitions (priority_       --
---     scheduler's job, not built yet).                           --
---   - Consequence of no release yet: once all event_slots fill   --
---     up, the table stays full until reset - expected and        --
---     acceptable for this increment, will be revisited once      --
---     ack_manager/priority_scheduler exist.                      --
+--     / ESCALATE policies, PENDING -> ACTIVE transitions          --
+--     (priority_scheduler's job, not built yet), partial          --
+--     cancellation of multiple matching instances.                --
+--   - release is driven by command_dispatcher on an ACK command   --
+--     (spec's ack_manager role) - a release naming an instance_id --
+--     that isn't currently occupying any slot (wrong id, already  --
+--     released, never existed) fails cleanly (release_ok='0'),    --
+--     the table is left untouched.                                --
 --   - Only priority/requires_ack are looked up from              --
 --     event_definition_rom and returned to the caller so far     --
---     (no full per-slot record storage yet, since nothing reads  --
---     it back in this version - will be added once a block       --
---     actually needs to query the table).                        --
+--     (no full per-slot record storage yet beyond instance_id -   --
+--     event_type/source_id/state etc. will be added once a       --
+--     block actually needs to query them, e.g. priority_         --
+--     scheduler).                                                 --
 --   - instance_id is a free-running 8-bit counter (spec 8.1:     --
 --     "הקצאת מזהה מופע 8-סיביות הבא"), not tied to slot index -   --
 --     matches the "oldest_instance_id" tie-break rule (8.2),      --
@@ -52,7 +54,15 @@ entity event_table_manager is
           alloc_unknown_type : out std_logic                    ; -- '1' when failed because event_type isn't recognized (only meaningful when alloc_ok='0')
           alloc_instance_id  : out std_logic_vector(7 downto 0) ; -- valid when alloc_ok='1'
           alloc_priority     : out std_logic_vector(2 downto 0) ; -- valid when alloc_ok='1'
-          alloc_requires_ack : out std_logic                     ) ; -- valid when alloc_ok='1'
+          alloc_requires_ack : out std_logic                    ; -- valid when alloc_ok='1'
+
+          -- release request (one-clock pulse, e.g. from command_dispatcher on a valid ACK command)
+          release_req         : in  std_logic                    ;
+          release_instance_id : in  std_logic_vector(7 downto 0) ;
+
+          -- release response (one-clock pulse)
+          release_done       : out std_logic                    ;
+          release_ok         : out std_logic                     ) ; -- '1' = a matching slot was found and freed, '0' = no such instance
 end event_table_manager ;
 
 architecture arc_event_table_manager of event_table_manager is
@@ -64,7 +74,10 @@ architecture arc_event_table_manager of event_table_manager is
              type_valid   : out std_logic                    ) ;
    end component ;
 
+   type instance_id_array_t is array (0 to event_slots - 1) of std_logic_vector(7 downto 0) ;
+
    signal slot_used         : std_logic_vector(0 to event_slots - 1) ;
+   signal slot_instance_id  : instance_id_array_t ;
    signal next_instance_id  : unsigned(7 downto 0) ;
 
    signal rom_priority      : std_logic_vector(2 downto 0) ;
@@ -72,6 +85,7 @@ architecture arc_event_table_manager of event_table_manager is
    signal rom_type_valid    : std_logic ;
 
    signal free_index        : integer range 0 to event_slots ; -- = event_slots means "table full"
+   signal match_index       : integer range 0 to event_slots ; -- = event_slots means "no such instance"
 
 begin
 
@@ -92,6 +106,19 @@ begin
       free_index <= idx ;
    end process ;
 
+   -- combinational search for the (at most one) used slot holding release_instance_id
+   find_match : process (slot_used, slot_instance_id, release_instance_id)
+      variable idx : integer range 0 to event_slots ;
+   begin
+      idx := event_slots ;
+      for i in 0 to event_slots - 1 loop
+         if slot_used(i) = '1' and slot_instance_id(i) = release_instance_id and idx = event_slots then
+            idx := i ;
+         end if ;
+      end loop ;
+      match_index <= idx ;
+   end process ;
+
    process (resetN, clk)
    begin
       if resetN = '0' then
@@ -103,8 +130,11 @@ begin
          alloc_instance_id  <= (others => '0') ;
          alloc_priority     <= (others => '0') ;
          alloc_requires_ack <= '0' ;
+         release_done       <= '0' ;
+         release_ok         <= '0' ;
       elsif rising_edge(clk) then
-         alloc_done <= '0' ; -- one-clock pulse, defaulted low every cycle
+         alloc_done   <= '0' ; -- one-clock pulses, defaulted low every cycle
+         release_done <= '0' ;
 
          if alloc_req = '1' then
             alloc_done <= '1' ;
@@ -112,16 +142,27 @@ begin
                alloc_ok           <= '0' ;
                alloc_unknown_type <= '1' ; -- rejected outright, table untouched
             elsif free_index < event_slots then
-               slot_used(free_index) <= '1' ;
-               alloc_ok               <= '1' ;
-               alloc_unknown_type     <= '0' ;
-               alloc_instance_id      <= std_logic_vector(next_instance_id) ;
-               alloc_priority         <= rom_priority ;
-               alloc_requires_ack     <= rom_requires_ack ;
-               next_instance_id       <= next_instance_id + 1 ;
+               slot_used(free_index)        <= '1' ;
+               slot_instance_id(free_index) <= std_logic_vector(next_instance_id) ;
+               alloc_ok                     <= '1' ;
+               alloc_unknown_type           <= '0' ;
+               alloc_instance_id            <= std_logic_vector(next_instance_id) ;
+               alloc_priority                <= rom_priority ;
+               alloc_requires_ack            <= rom_requires_ack ;
+               next_instance_id              <= next_instance_id + 1 ;
             else
                alloc_ok           <= '0' ; -- table full
                alloc_unknown_type <= '0' ;
+            end if ;
+         end if ;
+
+         if release_req = '1' then
+            release_done <= '1' ;
+            if match_index < event_slots then
+               slot_used(match_index) <= '0' ;
+               release_ok              <= '1' ;
+            else
+               release_ok <= '0' ; -- no slot currently holds this instance_id
             end if ;
          end if ;
       end if ;

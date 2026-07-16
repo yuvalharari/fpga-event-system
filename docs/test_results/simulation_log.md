@@ -596,3 +596,36 @@ tb_command_dispatcher: ALL TESTS PASSED   Time: 971 ns
 ```
 
 ---
+
+## event_table_manager (update) — `tb_event_table_manager.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** added slot release (spec's `ack_manager` role, section
+8.1/19.2 CANCEL_SCAN). Each slot now also stores the `instance_id` it was
+assigned. A new `release_req`/`release_instance_id` request searches the
+occupied slots for a match and frees it (`release_ok='1'`); a request
+naming an `instance_id` that doesn't currently occupy any slot (wrong id,
+already released, never allocated) fails cleanly (`release_ok='0'`)
+without touching the table.
+
+**What the testbench checks (10 scenarios total, unchanged 1-6 plus new
+7-10):**
+1-6. Unchanged (see previous entry - allocation, unknown type rejection,
+   table fill, table full).
+7. Release `instance_id=3` (occupies a slot) -> `release_ok='1'`, frees it.
+8. Allocate again -> succeeds now that a slot is free, gets a NEW
+   `instance_id=8` (the counter keeps climbing, `id=3` is not reused).
+9. Release `instance_id=3` again -> `release_ok='0'` (no longer occupies
+   any slot - the freed slot now holds `instance_id=8`).
+10. Release `instance_id=99` (never allocated) -> `release_ok='0'`.
+
+**Result: ALL TESTS PASSED** — no errors, all 10 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_event_table_manager: ALL TESTS PASSED   Time: 651 ns
+```
+
+---
