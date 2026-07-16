@@ -693,3 +693,40 @@ tb_command_dispatcher: ALL TESTS PASSED   Time: 1251 ns
 ```
 
 ---
+
+## event_table_manager (update 2) — `tb_event_table_manager.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** added `full_reset` (spec section 14.2.1, BUTTON1's role) -
+a one-clock pulse that clears every slot in the table in a single cycle,
+regardless of occupancy, and takes priority over any concurrent
+`alloc_req`/`release_req` that same cycle. Per spec 14.2.1 point 4, the
+`instance_id` counter is deliberately NOT reset - it keeps climbing across
+a `full_reset`, since resetting it would let a freshly-allocated instance
+reuse an id almost immediately after the reset, right when a stale ACK
+from before the reset might still be in flight. Natural 8-bit counter
+wraparound (255 -> 0) is a separate, much lower-risk case - it takes 256
+full allocations to recur, not one clock after a button press.
+
+**What the testbench checks (14 scenarios, unchanged 1-10 plus new 11-14):**
+1-10. Unchanged (see previous entries - allocation, unknown type
+   rejection, table fill, release, double release, release of a
+   never-allocated instance).
+11. `full_reset` pulse while the table is full (8/8 going in) -> clears
+    every slot.
+12. Allocate right after -> succeeds immediately, gets `instance_id=9` -
+    proves the counter kept running (not reset to 0).
+13. Fill the remaining 7 slots (`instance_id` 10..16) -> proves ALL 8
+    slots came back, not just one.
+14. One more allocation -> table full again.
+
+**Result: ALL TESTS PASSED** — no errors, all 14 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_event_table_manager: ALL TESTS PASSED   Time: 1051 ns
+```
+
+---

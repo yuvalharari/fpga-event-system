@@ -24,6 +24,15 @@
 --   9) release instance_id=3 again -> release_ok='0' (already      --
 --      released, no longer occupies any slot)                     --
 --  10) release instance_id=99 (never allocated) -> release_ok='0' --
+--  11) full_reset pulse (table is full, 8/8, going in) -> clears   --
+--      every slot                                                 --
+--  12) allocate right after -> succeeds immediately (table isn't  --
+--      full anymore), gets instance_id=9 - proves the instance_id --
+--      counter kept running across full_reset, not reset to 0     --
+--      (spec 14.2.1 point 4)                                      --
+--  13) fill the remaining 7 slots -> proves ALL 8 slots came back, --
+--      not just one                                                --
+--  14) one more allocation -> table full again                    --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -38,6 +47,8 @@ architecture sim of tb_event_table_manager is
 
    signal clk    : std_logic := '0' ;
    signal resetN : std_logic := '0' ;
+
+   signal full_reset : std_logic := '0' ;
 
    signal alloc_req          : std_logic := '0' ;
    signal event_type         : std_logic_vector(7 downto 0) := (others => '0') ;
@@ -62,6 +73,7 @@ begin
    dut : entity work.event_table_manager
       generic map ( event_slots => 8 )
       port map ( resetN => resetN, clk => clk,
+                 full_reset => full_reset,
                  alloc_req => alloc_req, event_type => event_type, source_id => source_id,
                  alloc_done => alloc_done, alloc_ok => alloc_ok, alloc_unknown_type => alloc_unknown_type,
                  alloc_instance_id => alloc_instance_id, alloc_priority => alloc_priority,
@@ -249,6 +261,40 @@ begin
       wait until rising_edge(clk) ;
       request_release( x"63" ) ; -- 0x63 = 99
       expect_release( '0', "release instance_id=99 (never allocated)" ) ;
+
+      ------------------------------------------------------------
+      -- 11) full_reset - table is full (8/8) going in, clears it
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      full_reset <= '1' ;
+      wait until rising_edge(clk) ;
+      wait for 1 ns ;
+      full_reset <= '0' ;
+
+      ------------------------------------------------------------
+      -- 12) allocate right after - succeeds immediately, and
+      -- instance_id=9 proves the counter kept running (not reset)
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      request_alloc( x"01", x"0C" ) ;
+      expect_success( x"09", "111", '1', "alloc right after full_reset (instance_id=9, counter not reset)" ) ;
+
+      ------------------------------------------------------------
+      -- 13) fill the remaining 7 slots - proves ALL 8 came back
+      ------------------------------------------------------------
+      for n in 10 to 16 loop
+         wait until rising_edge(clk) ;
+         request_alloc( x"0C", x"00" ) ;
+         expect_success( std_logic_vector(to_unsigned(n, 8)), "000", '0',
+                          "post-reset filler alloc #" & integer'image(n) ) ;
+      end loop ;
+
+      ------------------------------------------------------------
+      -- 14) one more allocation - table full again
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      request_alloc( x"01", x"0D" ) ;
+      expect_table_full( "alloc after post-reset table refilled (should be full again)" ) ;
 
       if errors = 0 then
          report "tb_event_table_manager: ALL TESTS PASSED" severity note ;

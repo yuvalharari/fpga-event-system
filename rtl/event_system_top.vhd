@@ -34,6 +34,11 @@
 -- Adds NACK,UNKNOWN_INSTANCE (project-defined, not in the spec's --
 -- error table) for an ACK naming an instance that isn't          --
 -- currently occupying any slot.                                  --
+--                                                               --
+-- Milestone 6: BUTTON1 full_reset wired in (spec section 14.2.1) --
+-- - a debounced BUTTON1 pulse clears the entire event table in   --
+-- one clock, without touching SYSTEM_ON/OFF or the instance_id   --
+-- counter.                                                        --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -41,6 +46,7 @@ use ieee.std_logic_1164.all ;
 entity event_system_top is
    port ( CLOCK_50 : in  std_logic ;
           BUTTON0  : in  std_logic ; -- active-low, System ON
+          BUTTON1  : in  std_logic ; -- active-low, full event-table reset
           BUTTON2  : in  std_logic ; -- active-low, System OFF
           LEDG0    : out std_logic ; -- lit when SYSTEM_ON
           RX1      : in  std_logic ; -- Add-On board FTDI/PC UART, FPGA receive
@@ -174,6 +180,7 @@ architecture arc_event_system_top of event_system_top is
       generic ( event_slots : positive := 8 ) ;
       port ( resetN             : in  std_logic                    ;
              clk                : in  std_logic                    ;
+             full_reset         : in  std_logic                    ;
              alloc_req          : in  std_logic                    ;
              event_type         : in  std_logic_vector(7 downto 0) ;
              source_id          : in  std_logic_vector(7 downto 0) ;
@@ -219,6 +226,7 @@ architecture arc_event_system_top of event_system_top is
 
    signal resetN         : std_logic ;
    signal button0_pulse  : std_logic ;
+   signal button1_pulse  : std_logic ;
    signal button2_pulse  : std_logic ;
    signal system_enable  : std_logic ;
 
@@ -282,6 +290,9 @@ begin
 
    u_button0 : button_pulse
       port map ( resetN => resetN, clk => CLOCK_50, button_n => BUTTON0, pulse => button0_pulse ) ;
+
+   u_button1 : button_pulse
+      port map ( resetN => resetN, clk => CLOCK_50, button_n => BUTTON1, pulse => button1_pulse ) ;
 
    u_button2 : button_pulse
       port map ( resetN => resetN, clk => CLOCK_50, button_n => BUTTON2, pulse => button2_pulse ) ;
@@ -384,6 +395,7 @@ begin
       generic map ( event_slots => 8 )
       port map ( resetN             => resetN             ,
                  clk                => CLOCK_50            ,
+                 full_reset         => button1_pulse       ,
                  alloc_req          => alloc_req           ,
                  event_type         => alloc_event_type    ,
                  source_id          => alloc_source_id     ,

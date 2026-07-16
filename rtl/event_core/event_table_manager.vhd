@@ -33,6 +33,14 @@
 --     '1') without touching the table at all - checked before     --
 --     the free-slot search, so it never consumes a slot or an     --
 --     instance_id.                                                --
+--   - full_reset (spec section 14.2.1, BUTTON1) clears every       --
+--     slot in one clock, regardless of state (ACTIVE/PENDING/     --
+--     PAUSED all collapse to FREE - reduced scope has no state    --
+--     field yet, so this is just "clear the whole occupancy       --
+--     bitmap"). Takes priority over any concurrent alloc_req/     --
+--     release_req that same cycle. Per spec 14.2.1 point 4, the   --
+--     instance_id counter is NOT reset (not required, left        --
+--     running).                                                   --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -42,6 +50,9 @@ entity event_table_manager is
    generic ( event_slots : positive := 8 ) ;
    port ( resetN             : in  std_logic                    ;
           clk                : in  std_logic                    ;
+
+          -- full table clear (one-clock pulse, e.g. from a debounced BUTTON1)
+          full_reset         : in  std_logic                    ;
 
           -- allocation request (one-clock pulse, e.g. from command_dispatcher on a valid EVT command)
           alloc_req          : in  std_logic                    ;
@@ -136,33 +147,37 @@ begin
          alloc_done   <= '0' ; -- one-clock pulses, defaulted low every cycle
          release_done <= '0' ;
 
-         if alloc_req = '1' then
-            alloc_done <= '1' ;
-            if rom_type_valid = '0' then
-               alloc_ok           <= '0' ;
-               alloc_unknown_type <= '1' ; -- rejected outright, table untouched
-            elsif free_index < event_slots then
-               slot_used(free_index)        <= '1' ;
-               slot_instance_id(free_index) <= std_logic_vector(next_instance_id) ;
-               alloc_ok                     <= '1' ;
-               alloc_unknown_type           <= '0' ;
-               alloc_instance_id            <= std_logic_vector(next_instance_id) ;
-               alloc_priority                <= rom_priority ;
-               alloc_requires_ack            <= rom_requires_ack ;
-               next_instance_id              <= next_instance_id + 1 ;
-            else
-               alloc_ok           <= '0' ; -- table full
-               alloc_unknown_type <= '0' ;
+         if full_reset = '1' then
+            slot_used <= (others => '0') ; -- takes priority over any concurrent alloc/release below
+         else
+            if alloc_req = '1' then
+               alloc_done <= '1' ;
+               if rom_type_valid = '0' then
+                  alloc_ok           <= '0' ;
+                  alloc_unknown_type <= '1' ; -- rejected outright, table untouched
+               elsif free_index < event_slots then
+                  slot_used(free_index)        <= '1' ;
+                  slot_instance_id(free_index) <= std_logic_vector(next_instance_id) ;
+                  alloc_ok                     <= '1' ;
+                  alloc_unknown_type           <= '0' ;
+                  alloc_instance_id            <= std_logic_vector(next_instance_id) ;
+                  alloc_priority                <= rom_priority ;
+                  alloc_requires_ack            <= rom_requires_ack ;
+                  next_instance_id              <= next_instance_id + 1 ;
+               else
+                  alloc_ok           <= '0' ; -- table full
+                  alloc_unknown_type <= '0' ;
+               end if ;
             end if ;
-         end if ;
 
-         if release_req = '1' then
-            release_done <= '1' ;
-            if match_index < event_slots then
-               slot_used(match_index) <= '0' ;
-               release_ok              <= '1' ;
-            else
-               release_ok <= '0' ; -- no slot currently holds this instance_id
+            if release_req = '1' then
+               release_done <= '1' ;
+               if match_index < event_slots then
+                  slot_used(match_index) <= '0' ;
+                  release_ok              <= '1' ;
+               else
+                  release_ok <= '0' ; -- no slot currently holds this instance_id
+               end if ;
             end if ;
          end if ;
       end if ;

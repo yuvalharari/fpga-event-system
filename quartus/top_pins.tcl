@@ -12,6 +12,7 @@
 
 set_location_assignment PIN_G21 -to CLOCK_50
 set_location_assignment PIN_H2  -to BUTTON0
+set_location_assignment PIN_G3  -to BUTTON1
 set_location_assignment PIN_F1  -to BUTTON2
 set_location_assignment PIN_J1  -to LEDG0
 set_location_assignment PIN_R12 -to TX1
@@ -21,6 +22,7 @@ set_location_assignment PIN_T12 -to RX1
 # override Quartus's generic "2.5V (default)" I/O standard to match.
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to CLOCK_50
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BUTTON0
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BUTTON1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BUTTON2
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG0
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX1
