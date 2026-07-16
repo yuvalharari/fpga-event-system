@@ -559,3 +559,40 @@ tb_response_builder: ALL TESTS PASSED   Time: 291 ns
 ```
 
 ---
+
+## command_dispatcher (update) — `tb_command_dispatcher.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** EVT commands now go through a real allocation request/
+response handshake with `event_table_manager` (spec section 8.1) instead of
+using `source_id` as a placeholder instance id. A small two-state FSM
+(IDLE / WAIT_ALLOC) issues `alloc_req` and waits for `alloc_done`, then
+picks `build_ack` (real instance id), `build_nack_unknown_evt`, or
+`build_nack_table_full` based on the result. ACK commands and parser-error
+codes 01/02 are still answered directly in one cycle, unchanged.
+
+This testbench instantiates a REAL `event_table_manager` alongside the DUT
+(not a mock) - already verified standalone in `tb_event_table_manager` -
+to check the actual integration contract between the two blocks.
+
+**What the testbench checks:**
+1. `cmd_valid`+`cmd_is_ack`, `instance_id=0x17` -> `build_ack`,
+   `param_byte=0x17` (single cycle, unchanged).
+2. `cmd_error`, code=0x01 -> `build_nack_bad_format`.
+3. `cmd_error`, code=0x02 -> `build_nack_unknown`.
+4. EVT, `event_type=01` -> real allocation succeeds, `build_ack`,
+   `param_byte=instance_id=0`.
+5. EVT, `event_type=07` -> succeeds, `param_byte=instance_id=1`.
+6. EVT, `event_type=0D` (not in the catalog) -> `build_nack_unknown_evt`.
+7. Fill the remaining 6 slots, then a 9th EVT -> `build_nack_table_full`.
+
+**Result: ALL TESTS PASSED** — no errors, all 7 scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_command_dispatcher: ALL TESTS PASSED   Time: 971 ns
+```
+
+---
