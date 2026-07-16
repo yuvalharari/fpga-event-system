@@ -20,6 +20,12 @@
 -- (e.g. "EVT,01,03") gets a real ACK/NACK response back over the --
 -- same UART link (spec section 23, days 4-6 target: "STATUS     --
 -- ו-ACK/NACK בסיסי דרך בלוטוס'").                                 --
+--                                                               --
+-- Milestone 4: event_table_manager wired in - EVT commands now  --
+-- get a REAL instance_id from a real allocation, instead of      --
+-- command_dispatcher's old source_id placeholder. Adds the       --
+-- NACK,UNKNOWN_EVENT / NACK,TABLE_FULL response paths (spec      --
+-- section 16, error codes 03/04).                                --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -131,14 +137,39 @@ architecture arc_event_system_top of event_system_top is
              cmd_valid      : in  std_logic                    ;
              cmd_is_evt     : in  std_logic                    ;
              cmd_is_ack     : in  std_logic                    ;
+             event_type     : in  std_logic_vector(7 downto 0) ;
              source_id      : in  std_logic_vector(7 downto 0) ;
              instance_id    : in  std_logic_vector(7 downto 0) ;
              cmd_error      : in  std_logic                    ;
              cmd_error_code : in  std_logic_vector(7 downto 0) ;
+             alloc_req          : out std_logic                    ;
+             alloc_event_type   : out std_logic_vector(7 downto 0) ;
+             alloc_source_id    : out std_logic_vector(7 downto 0) ;
+             alloc_done         : in  std_logic                    ;
+             alloc_ok           : in  std_logic                    ;
+             alloc_unknown_type : in  std_logic                    ;
+             alloc_instance_id  : in  std_logic_vector(7 downto 0) ;
              build_ack              : out std_logic                    ;
              build_nack_bad_format  : out std_logic                    ;
              build_nack_unknown     : out std_logic                    ;
+             build_nack_unknown_evt : out std_logic                    ;
+             build_nack_table_full  : out std_logic                    ;
              param_byte             : out std_logic_vector(7 downto 0) ) ;
+   end component ;
+
+   component event_table_manager
+      generic ( event_slots : positive := 8 ) ;
+      port ( resetN             : in  std_logic                    ;
+             clk                : in  std_logic                    ;
+             alloc_req          : in  std_logic                    ;
+             event_type         : in  std_logic_vector(7 downto 0) ;
+             source_id          : in  std_logic_vector(7 downto 0) ;
+             alloc_done         : out std_logic                    ;
+             alloc_ok           : out std_logic                    ;
+             alloc_unknown_type : out std_logic                    ;
+             alloc_instance_id  : out std_logic_vector(7 downto 0) ;
+             alloc_priority     : out std_logic_vector(2 downto 0) ;
+             alloc_requires_ack : out std_logic                     ) ;
    end component ;
 
    component response_builder
@@ -148,6 +179,8 @@ architecture arc_event_system_top of event_system_top is
              build_ack              : in  std_logic                                          ;
              build_nack_bad_format  : in  std_logic                                          ;
              build_nack_unknown     : in  std_logic                                          ;
+             build_nack_unknown_evt : in  std_logic                                          ;
+             build_nack_table_full  : in  std_logic                                          ;
              param_byte             : in  std_logic_vector(7 downto 0)                       ;
              resp_data              : out std_logic_vector(max_response_length*8-1 downto 0) ;
              resp_length            : out std_logic_vector(7 downto 0)                       ;
@@ -197,10 +230,22 @@ architecture arc_event_system_top of event_system_top is
    signal cmd_error      : std_logic ;
    signal cmd_error_code : std_logic_vector(7 downto 0) ;
 
-   signal build_ack             : std_logic ;
-   signal build_nack_bad_format : std_logic ;
-   signal build_nack_unknown    : std_logic ;
-   signal param_byte            : std_logic_vector(7 downto 0) ;
+   signal alloc_req          : std_logic ;
+   signal alloc_event_type   : std_logic_vector(7 downto 0) ;
+   signal alloc_source_id    : std_logic_vector(7 downto 0) ;
+   signal alloc_done         : std_logic ;
+   signal alloc_ok           : std_logic ;
+   signal alloc_unknown_type : std_logic ;
+   signal alloc_instance_id  : std_logic_vector(7 downto 0) ;
+   signal alloc_priority     : std_logic_vector(2 downto 0) ;
+   signal alloc_requires_ack : std_logic ;
+
+   signal build_ack              : std_logic ;
+   signal build_nack_bad_format  : std_logic ;
+   signal build_nack_unknown     : std_logic ;
+   signal build_nack_unknown_evt : std_logic ;
+   signal build_nack_table_full  : std_logic ;
+   signal param_byte             : std_logic_vector(7 downto 0) ;
 
    signal resp_data   : std_logic_vector(32*8-1 downto 0) ;
    signal resp_length : std_logic_vector(7 downto 0) ;
@@ -287,14 +332,38 @@ begin
                  cmd_valid      => cmd_valid      ,
                  cmd_is_evt     => cmd_is_evt     ,
                  cmd_is_ack     => cmd_is_ack     ,
+                 event_type     => event_type     ,
                  source_id      => source_id      ,
                  instance_id    => instance_id    ,
                  cmd_error      => cmd_error      ,
                  cmd_error_code => cmd_error_code ,
+                 alloc_req          => alloc_req          ,
+                 alloc_event_type   => alloc_event_type   ,
+                 alloc_source_id    => alloc_source_id    ,
+                 alloc_done         => alloc_done         ,
+                 alloc_ok           => alloc_ok           ,
+                 alloc_unknown_type => alloc_unknown_type ,
+                 alloc_instance_id  => alloc_instance_id  ,
                  build_ack              => build_ack              ,
                  build_nack_bad_format  => build_nack_bad_format   ,
                  build_nack_unknown     => build_nack_unknown      ,
+                 build_nack_unknown_evt => build_nack_unknown_evt  ,
+                 build_nack_table_full  => build_nack_table_full   ,
                  param_byte             => param_byte              ) ;
+
+   u_event_table : event_table_manager
+      generic map ( event_slots => 8 )
+      port map ( resetN             => resetN             ,
+                 clk                => CLOCK_50            ,
+                 alloc_req          => alloc_req           ,
+                 event_type         => alloc_event_type    ,
+                 source_id          => alloc_source_id     ,
+                 alloc_done         => alloc_done          ,
+                 alloc_ok           => alloc_ok            ,
+                 alloc_unknown_type => alloc_unknown_type  ,
+                 alloc_instance_id  => alloc_instance_id   ,
+                 alloc_priority     => alloc_priority      ,
+                 alloc_requires_ack => alloc_requires_ack  ) ;
 
    u_response_builder : response_builder
       generic map ( max_response_length => 32 )
@@ -303,6 +372,8 @@ begin
                  build_ack              => build_ack              ,
                  build_nack_bad_format  => build_nack_bad_format  ,
                  build_nack_unknown     => build_nack_unknown     ,
+                 build_nack_unknown_evt => build_nack_unknown_evt ,
+                 build_nack_table_full  => build_nack_table_full  ,
                  param_byte             => param_byte             ,
                  resp_data              => resp_data              ,
                  resp_length            => resp_length            ,

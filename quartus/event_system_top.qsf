@@ -71,6 +71,8 @@ set_location_assignment PIN_R12 -to TX1
 set_location_assignment PIN_T12 -to RX1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX1
+set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/event_core/event_definition_rom.vhd"
+set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/event_core/event_table_manager.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/infrastructure/command_dispatcher.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/infrastructure/line_receiver.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/infrastructure/response_builder.vhd"

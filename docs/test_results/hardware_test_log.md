@@ -175,3 +175,42 @@ further byte loss across two full repeated test rounds.
 I/O.
 
 ---
+
+## Milestone 4 — `event_table_manager` wired in (real instance allocation)
+
+**Date:** 2026-07-16
+**Tool:** Quartus II 9.1sp2 + COMSH.EXE v2.8, `termb` mode.
+**Device:** Cyclone III EP3C16F484C6 (DE0 board), Add-On card on GPIO_1.
+
+**What was tested:** `event_table_manager` (spec section 8.1, reduced
+allocation-only scope - see its own header) wired into `command_dispatcher`,
+replacing the old `source_id`-as-placeholder behavior with a real
+allocation request/response handshake. A successful EVT command now gets a
+real, monotonically-increasing `instance_id` from `event_table_manager`
+instead of an echo of whatever `source_id` was sent. `response_builder`
+gained two new response types (`NACK,UNKNOWN_EVENT` / `NACK,TABLE_FULL`,
+spec section 16 error codes 03/04) to report allocation failures.
+
+**Physical test performed (via comsh, 9600/8/N/1, no flow control):**
+1. `EVT,01,03` + Enter -> `ACK,INSTANCE=00` (first real allocation).
+2. `EVT,01,03` + Enter again -> `ACK,INSTANCE=01` (instance_id incremented,
+   proving it's a real counter, not an echo of `source_id=03` like before).
+
+**Result: PASS** - both responses matched exactly, byte for byte, confirmed
+in comsh's binary terminal (`tx =>` / `rx <=` traces). No bugs found this
+round.
+
+**New source files added to the Quartus project:**
+`rtl/event_core/event_definition_rom.vhd`,
+`rtl/event_core/event_table_manager.vhd`.
+
+**Pin assignments:** unchanged - this milestone added only internal logic,
+no new physical I/O.
+
+**Known limitation carried forward from the reduced scope (see
+`event_table_manager.vhd`'s header):** no slot release yet, so after 8
+successful EVT allocations (`event_slots` default), every further EVT will
+return `NACK,TABLE_FULL` until a reset - not yet re-tested on hardware in
+this round, deferred until `ack_manager`/release logic exists.
+
+---
