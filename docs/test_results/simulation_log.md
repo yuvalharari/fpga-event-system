@@ -525,3 +525,37 @@ tb_event_table_manager: ALL TESTS PASSED   Time: 491 ns
 ```
 
 ---
+
+## response_builder (update) — `tb_response_builder.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** added two new response types (spec section 16 error
+table), needed to wire `event_table_manager` into the response chain:
+- `build_nack_unknown_evt` -> `"NACK,UNKNOWN_EVENT"` (18 chars, error 03 -
+  a syntactically valid EVT command naming an `event_type` not in
+  `event_definition_rom`'s catalog).
+- `build_nack_table_full` -> `"NACK,TABLE_FULL"` (15 chars, error 04 - a
+  valid EVT command but `event_table_manager` has no free slot).
+
+**What the testbench checks (6 scenarios total, unchanged 1-4 plus new
+5-6):**
+1. `build_ack`, param=0x17 -> `"ACK,INSTANCE=17"`
+2. `build_ack`, param=0xAB -> `"ACK,INSTANCE=AB"` (hex letters)
+3. `build_nack_bad_format` -> `"NACK,BAD_FORMAT"`
+4. `build_nack_unknown` -> `"NACK,UNKNOWN_COMMAND"`
+5. `build_nack_unknown_evt` -> `"NACK,UNKNOWN_EVENT"`
+6. `build_nack_table_full` -> `"NACK,TABLE_FULL"`
+
+Every byte of every response is checked against the expected ASCII text,
+not just spot checks.
+
+**Result: ALL TESTS PASSED** — no errors, all 6 scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_response_builder: ALL TESTS PASSED   Time: 291 ns
+```
+
+---

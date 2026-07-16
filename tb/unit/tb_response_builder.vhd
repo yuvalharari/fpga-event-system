@@ -11,6 +11,8 @@
 --      letters, not just digits)                                --
 --   3) build_nack_bad_format      -> "NACK,BAD_FORMAT" (15 chars)--
 --   4) build_nack_unknown         -> "NACK,UNKNOWN_COMMAND" (20) --
+--   5) build_nack_unknown_evt     -> "NACK,UNKNOWN_EVENT" (18)   --
+--   6) build_nack_table_full      -> "NACK,TABLE_FULL" (15)      --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -32,6 +34,8 @@ architecture sim of tb_response_builder is
    signal build_ack             : std_logic := '0' ;
    signal build_nack_bad_format : std_logic := '0' ;
    signal build_nack_unknown    : std_logic := '0' ;
+   signal build_nack_unknown_evt: std_logic := '0' ;
+   signal build_nack_table_full : std_logic := '0' ;
    signal param_byte            : std_logic_vector(7 downto 0) := (others => '0') ;
 
    signal resp_data   : std_logic_vector(g_max_resp_len*8-1 downto 0) ;
@@ -46,7 +50,8 @@ begin
       generic map ( max_response_length => g_max_resp_len )
       port map ( resetN => resetN, clk => clk,
                  build_ack => build_ack, build_nack_bad_format => build_nack_bad_format,
-                 build_nack_unknown => build_nack_unknown, param_byte => param_byte,
+                 build_nack_unknown => build_nack_unknown, build_nack_unknown_evt => build_nack_unknown_evt,
+                 build_nack_table_full => build_nack_table_full, param_byte => param_byte,
                  resp_data => resp_data, resp_length => resp_length, resp_ready => resp_ready ) ;
 
    clk_gen : process
@@ -138,6 +143,31 @@ begin
           x"4E", x"4F", x"57", x"4E", x"5F", x"43", x"4F", x"4D",
           x"4D", x"41", x"4E", x"44") ,                               -- "NACK,UNKNOWN_COMMAND"
          "NACK,UNKNOWN_COMMAND" ) ;
+
+      ------------------------------------------------------------
+      -- 5) NACK,UNKNOWN_EVENT
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      build_nack_unknown_evt <= '1' ;
+      wait until rising_edge(clk) ;
+      build_nack_unknown_evt <= '0' ;
+      check_response(
+         (x"4E", x"41", x"43", x"4B", x"2C", x"55", x"4E", x"4B",
+          x"4E", x"4F", x"57", x"4E", x"5F", x"45", x"56", x"45",
+          x"4E", x"54") ,                                             -- "NACK,UNKNOWN_EVENT"
+         "NACK,UNKNOWN_EVENT" ) ;
+
+      ------------------------------------------------------------
+      -- 6) NACK,TABLE_FULL
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      build_nack_table_full <= '1' ;
+      wait until rising_edge(clk) ;
+      build_nack_table_full <= '0' ;
+      check_response(
+         (x"4E", x"41", x"43", x"4B", x"2C", x"54", x"41", x"42",
+          x"4C", x"45", x"5F", x"46", x"55", x"4C", x"4C") ,           -- "NACK,TABLE_FULL"
+         "NACK,TABLE_FULL" ) ;
 
       if errors = 0 then
          report "tb_response_builder: ALL TESTS PASSED" severity note ;
