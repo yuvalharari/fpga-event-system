@@ -457,3 +457,31 @@ tb_command_dispatcher: ALL TESTS PASSED   Time: 211 ns
 ```
 
 ---
+
+## event_definition_rom — `tb_event_definition_rom.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `event_definition_rom` does:** lookup table of default properties per
+`event_type` (spec section 7.5/18.1). Reduced initial scope: only `priority`
+and `requires_ack` looked up so far (`script_id`/`audio_track` will follow
+once the script engine exists). Purely combinational - no `clk`/`resetN`, a
+ROM has no state of its own. Uses a custom medical-monitoring event catalog
+(12 types) instead of the spec's example fire-alarm catalog - see
+`event_definition_rom.vhd`'s header for the full table (type 01
+LIFE_THREATENING_EMERGENCY down to 0C SYSTEM_READY).
+
+**What the testbench checks:**
+1. All 12 defined event types (`x"01"`-`x"0C"`) -> exact `priority` and
+   `requires_ack` match, `type_valid='1'`.
+2. Three unrecognized codes (`x"00"`, `x"0D"`, `x"FF"`) -> `type_valid='0'`.
+
+**Result: ALL TESTS PASSED** — no errors, all 15 scenarios passed, simulation
+completed and halted on its own (no clock needed for this combinational DUT).
+
+```
+tb_event_definition_rom: ALL TESTS PASSED   Time: 15 ns
+```
+
+---
