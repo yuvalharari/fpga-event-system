@@ -485,3 +485,43 @@ tb_event_definition_rom: ALL TESTS PASSED   Time: 15 ns
 ```
 
 ---
+
+## event_table_manager — `tb_event_table_manager.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `event_table_manager` does:** allocates real event instances (spec
+section 7.2/8.1). Reduced initial scope: only allocation is implemented
+(search a free slot, load defaults from `event_definition_rom`, write the
+slot, assign a real `instance_id` from a free-running 8-bit counter) - no
+duplicate detection, merge/replace/escalate policies, slot release, or
+ACK-driven state transitions yet (those belong to `duplicate_detector`,
+`ack_manager`, `priority_scheduler`, none built yet). A request naming an
+`event_type` not in `event_definition_rom`'s catalog is rejected outright
+(`alloc_unknown_type='1'`) without touching the table. `event_slots`
+defaults to 8 for now (dev/debug default, not final - see
+`project_event_slots_sizing` note on why it'll likely grow later).
+
+**What the testbench checks:**
+1. Allocate `event_type=01` (LIFE_THREATENING_EMERGENCY) -> `instance_id=0`,
+   `priority=111`, `requires_ack='1'`.
+2. Allocate `event_type=07` (MEDICATION_MISSED) -> `instance_id=1`,
+   `priority=011`, `requires_ack='0'`.
+3. Allocate `event_type=0D` (not in the catalog) -> rejected
+   (`alloc_ok='0'`, `alloc_unknown_type='1'`), and does NOT consume a
+   slot/instance_id - confirmed by the next successful allocation still
+   getting `instance_id=2`.
+4. Fill the remaining 6 slots (`instance_id` 2..7 in order).
+5. A 9th allocation -> table full (`alloc_ok='0'`, `alloc_unknown_type='0'`).
+6. A 10th allocation right after -> still table full, no state corruption
+   from the failed request.
+
+**Result: ALL TESTS PASSED** — no errors, all scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_event_table_manager: ALL TESTS PASSED   Time: 491 ns
+```
+
+---
