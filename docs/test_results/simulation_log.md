@@ -429,3 +429,31 @@ tb_response_sender: ALL TESTS PASSED   Time: 1611 ns
 ```
 
 ---
+
+## command_dispatcher — `tb_command_dispatcher.vhd`
+
+**Date:** 2026-07-15
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `command_dispatcher` does:** maps `text_command_parser`'s output to
+the right `response_builder` request. Reduced-scope note: a successful EVT
+reports back the source id as a placeholder "instance" (no
+`event_table_manager` yet to allocate a real instance id); a successful ACK
+correctly reports the real instance id it named.
+
+**What the testbench checks:**
+1. `cmd_valid`+`cmd_is_evt`, `source_id=0x03` -> `build_ack`,
+   `param_byte=0x03`
+2. `cmd_valid`+`cmd_is_ack`, `instance_id=0x17` -> `build_ack`,
+   `param_byte=0x17`
+3. `cmd_error`, code=0x01 -> `build_nack_bad_format`
+4. `cmd_error`, code=0x02 -> `build_nack_unknown`
+
+**Result: ALL TESTS PASSED** — no errors, all 4 scenarios passed, simulation
+completed and halted on its own.
+
+```
+tb_command_dispatcher: ALL TESTS PASSED   Time: 211 ns
+```
+
+---
