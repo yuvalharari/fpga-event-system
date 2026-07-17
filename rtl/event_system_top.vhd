@@ -39,9 +39,20 @@
 -- - a debounced BUTTON1 pulse clears the entire event table in   --
 -- one clock, without touching SYSTEM_ON/OFF or the instance_id   --
 -- counter.                                                        --
+--                                                               --
+-- Milestone 7: priority_scheduler wired in (spec section 8.2/    --
+-- 23 days 10-12 target: "הדגמת מתזמן מבוססת-LED בלבד" - an       --
+-- LED-based scheduler demo only, no script engine needed yet).   --
+-- event_table_manager's table_changed drives its reschedule       --
+-- input directly (guaranteed-fresh table data, see                --
+-- event_table_manager's header). LEDG1 lights whenever some       --
+-- event is active; LEDG2-LEDG4 show which slot (binary,           --
+-- 0-7) - only meaningful while LEDG1 is lit.                      --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
+use ieee.numeric_std.all ;
+use work.event_system_pkg.all ;
 
 entity event_system_top is
    port ( CLOCK_50 : in  std_logic ;
@@ -49,6 +60,10 @@ entity event_system_top is
           BUTTON1  : in  std_logic ; -- active-low, full event-table reset
           BUTTON2  : in  std_logic ; -- active-low, System OFF
           LEDG0    : out std_logic ; -- lit when SYSTEM_ON
+          LEDG1    : out std_logic ; -- lit when some event is active
+          LEDG2    : out std_logic ; -- active slot index, bit 2 (MSB)
+          LEDG3    : out std_logic ; -- active slot index, bit 1
+          LEDG4    : out std_logic ; -- active slot index, bit 0 (LSB)
           RX1      : in  std_logic ; -- Add-On board FTDI/PC UART, FPGA receive
           TX1      : out std_logic ) ; -- Add-On board FTDI/PC UART, FPGA transmit
 end event_system_top ;
@@ -193,7 +208,26 @@ architecture arc_event_system_top of event_system_top is
              release_req         : in  std_logic                    ;
              release_instance_id : in  std_logic_vector(7 downto 0) ;
              release_done        : out std_logic                    ;
-             release_ok          : out std_logic                     ) ;
+             release_ok          : out std_logic                    ;
+             table_used         : out std_logic_vector(0 to event_slots - 1)         ;
+             table_priority     : out priority_array_t(0 to event_slots - 1)         ;
+             table_instance_id  : out instance_id_array_t(0 to event_slots - 1)      ;
+             table_changed      : out std_logic                                       ) ;
+   end component ;
+
+   component priority_scheduler
+      generic ( event_slots       : positive := 8 ;
+                preempt_threshold : natural  := 7 ) ;
+      port ( resetN         : in  std_logic                                     ;
+             clk            : in  std_logic                                     ;
+             reschedule     : in  std_logic                                     ;
+             table_used        : in  std_logic_vector(0 to event_slots - 1)     ;
+             table_priority    : in  priority_array_t(0 to event_slots - 1)     ;
+             table_instance_id : in  instance_id_array_t(0 to event_slots - 1)  ;
+             active_valid   : out std_logic                                     ;
+             active_index   : out integer range 0 to event_slots - 1            ;
+             start_pulse    : out std_logic                                     ;
+             preempt_pulse  : out std_logic                                      ) ;
    end component ;
 
    component response_builder
@@ -270,6 +304,17 @@ architecture arc_event_system_top of event_system_top is
    signal release_instance_id : std_logic_vector(7 downto 0) ;
    signal release_done        : std_logic ;
    signal release_ok          : std_logic ;
+
+   signal table_used        : std_logic_vector(0 to 7) ;
+   signal table_priority    : priority_array_t(0 to 7) ;
+   signal table_instance_id : instance_id_array_t(0 to 7) ;
+   signal table_changed     : std_logic ;
+
+   signal sched_active_valid  : std_logic ;
+   signal sched_active_index  : integer range 0 to 7 ;
+   signal sched_start_pulse   : std_logic ;
+   signal sched_preempt_pulse : std_logic ;
+   signal sched_active_index_vec : std_logic_vector(2 downto 0) ;
 
    signal build_ack               : std_logic ;
    signal build_nack_bad_format   : std_logic ;
@@ -408,7 +453,31 @@ begin
                  release_req         => release_req         ,
                  release_instance_id => release_instance_id ,
                  release_done        => release_done        ,
-                 release_ok          => release_ok          ) ;
+                 release_ok          => release_ok          ,
+                 table_used         => table_used         ,
+                 table_priority     => table_priority     ,
+                 table_instance_id  => table_instance_id  ,
+                 table_changed      => table_changed      ) ;
+
+   u_scheduler : priority_scheduler
+      generic map ( event_slots => 8, preempt_threshold => 7 )
+      port map ( resetN            => resetN            ,
+                 clk               => CLOCK_50           ,
+                 reschedule        => table_changed      ,
+                 table_used        => table_used         ,
+                 table_priority    => table_priority     ,
+                 table_instance_id => table_instance_id  ,
+                 active_valid      => sched_active_valid ,
+                 active_index      => sched_active_index ,
+                 start_pulse       => sched_start_pulse  ,
+                 preempt_pulse     => sched_preempt_pulse ) ;
+
+   sched_active_index_vec <= std_logic_vector(to_unsigned(sched_active_index, 3)) ;
+
+   LEDG1 <= sched_active_valid ;
+   LEDG2 <= sched_active_index_vec(2) ;
+   LEDG3 <= sched_active_index_vec(1) ;
+   LEDG4 <= sched_active_index_vec(0) ;
 
    u_response_builder : response_builder
       generic map ( max_response_length => 32 )

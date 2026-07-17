@@ -46,6 +46,20 @@
 --     priority_scheduler can read it directly - priority is now   --
 --     persisted per slot (not just returned once at allocation    --
 --     time like before) for exactly this reason.                  --
+--   - table_changed pulses one clock after ANY successful table    --
+--     mutation (alloc success, release success, or full_reset -    --
+--     NOT on a failed alloc/release, since the table didn't        --
+--     actually change) - meant to drive priority_scheduler's       --
+--     reschedule input directly. Deliberately NOT just "OR the     --
+--     three done signals together" at the call site: full_reset    --
+--     has no done/ok pulse of its own, and table_used only         --
+--     becomes visible to a reader the cycle AFTER the mutating     --
+--     edge - so table_changed is generated in the exact same       --
+--     process, on the exact same edge, as the slot_used writes     --
+--     themselves, guaranteeing a reader sees an up-to-date table   --
+--     at the moment table_changed reads '1', with no stale-data    --
+--     race (VHDL-93 has no other easy way to express "wait for     --
+--     this signal update" across entities).                        --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -84,7 +98,12 @@ entity event_table_manager is
           -- whole-table read-out, for priority_scheduler (spec section 18.2)
           table_used         : out std_logic_vector(0 to event_slots - 1)          ;
           table_priority     : out priority_array_t(0 to event_slots - 1)          ;
-          table_instance_id  : out instance_id_array_t(0 to event_slots - 1)        ) ;
+          table_instance_id  : out instance_id_array_t(0 to event_slots - 1)       ;
+
+          -- one-clock pulse: the table actually changed (alloc success,
+          -- release success, or full_reset) - drives priority_scheduler's
+          -- reschedule input with guaranteed-fresh table data
+          table_changed      : out std_logic                                       ) ;
 end event_table_manager ;
 
 architecture arc_event_table_manager of event_table_manager is
@@ -153,12 +172,15 @@ begin
          alloc_requires_ack <= '0' ;
          release_done       <= '0' ;
          release_ok         <= '0' ;
+         table_changed      <= '0' ;
       elsif rising_edge(clk) then
-         alloc_done   <= '0' ; -- one-clock pulses, defaulted low every cycle
-         release_done <= '0' ;
+         alloc_done    <= '0' ; -- one-clock pulses, defaulted low every cycle
+         release_done  <= '0' ;
+         table_changed <= '0' ;
 
          if full_reset = '1' then
-            slot_used <= (others => '0') ; -- takes priority over any concurrent alloc/release below
+            slot_used     <= (others => '0') ; -- takes priority over any concurrent alloc/release below
+            table_changed <= '1' ;
          else
             if alloc_req = '1' then
                alloc_done <= '1' ;
@@ -175,6 +197,7 @@ begin
                   alloc_priority                <= rom_priority ;
                   alloc_requires_ack            <= rom_requires_ack ;
                   next_instance_id              <= next_instance_id + 1 ;
+                  table_changed                  <= '1' ;
                else
                   alloc_ok           <= '0' ; -- table full
                   alloc_unknown_type <= '0' ;
@@ -186,6 +209,7 @@ begin
                if match_index < event_slots then
                   slot_used(match_index) <= '0' ;
                   release_ok              <= '1' ;
+                  table_changed            <= '1' ;
                else
                   release_ok <= '0' ; -- no slot currently holds this instance_id
                end if ;

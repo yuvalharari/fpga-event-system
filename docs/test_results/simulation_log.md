@@ -813,3 +813,33 @@ tb_priority_scheduler: ALL TESTS PASSED   Time: 371 ns
 ```
 
 ---
+
+## event_table_manager (update 4) — `tb_event_table_manager.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** added a new `table_changed` output - a one-clock pulse
+exactly one cycle after any successful table mutation (alloc success,
+release success, or `full_reset`), meant to drive `priority_scheduler`'s
+`reschedule` input directly. Generated in the same process, on the same
+edge, as the underlying `slot_used` writes, so a reader sampling
+`table_changed='1'` always sees an already-up-to-date `table_used` -
+avoiding a stale-data race that a naively-OR'd-together set of `done`
+signals (plus `full_reset`, which has no `done` pulse of its own) would
+have introduced.
+
+**What the testbench checks:** every existing success/failure check
+(`expect_success`, `expect_table_full`, `expect_unknown_type`,
+`expect_release`) now also asserts `table_changed` matches (1 on success,
+0 on failure), plus a standalone check that `table_changed='1'` right
+after the `full_reset` pulse.
+
+**Result: ALL TESTS PASSED** — no errors, simulation completed and halted
+on its own.
+
+```
+tb_event_table_manager: ALL TESTS PASSED   Time: 1051 ns
+```
+
+---

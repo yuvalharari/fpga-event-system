@@ -15,6 +15,10 @@ set_location_assignment PIN_H2  -to BUTTON0
 set_location_assignment PIN_G3  -to BUTTON1
 set_location_assignment PIN_F1  -to BUTTON2
 set_location_assignment PIN_J1  -to LEDG0
+set_location_assignment PIN_J2  -to LEDG1
+set_location_assignment PIN_J3  -to LEDG2
+set_location_assignment PIN_H1  -to LEDG3
+set_location_assignment PIN_F2  -to LEDG4
 set_location_assignment PIN_R12 -to TX1
 set_location_assignment PIN_T12 -to RX1
 
@@ -25,6 +29,10 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BUTTON0
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BUTTON1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BUTTON2
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG0
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG1
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG2
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG3
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG4
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX1
 

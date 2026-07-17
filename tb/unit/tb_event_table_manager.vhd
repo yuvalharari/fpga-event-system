@@ -36,6 +36,8 @@
 --  4b) after filling to 8/8, check the table_used/table_priority/ --
 --      table_instance_id read-out ports (new - what                --
 --      priority_scheduler will read) match the known contents      --
+--  table_changed is also checked throughout: '1' on every           --
+--  successful alloc/release/full_reset, '0' on every failed one    --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -73,6 +75,7 @@ architecture sim of tb_event_table_manager is
    signal table_used        : std_logic_vector(0 to 7) ;
    signal table_priority    : priority_array_t(0 to 7) ;
    signal table_instance_id : instance_id_array_t(0 to 7) ;
+   signal table_changed     : std_logic ;
 
    signal sim_done : boolean := false ;
 
@@ -88,7 +91,8 @@ begin
                  alloc_requires_ack => alloc_requires_ack,
                  release_req => release_req, release_instance_id => release_instance_id,
                  release_done => release_done, release_ok => release_ok,
-                 table_used => table_used, table_priority => table_priority, table_instance_id => table_instance_id ) ;
+                 table_used => table_used, table_priority => table_priority, table_instance_id => table_instance_id,
+                 table_changed => table_changed ) ;
 
    clk_gen : process
    begin
@@ -137,6 +141,10 @@ begin
             errors := errors + 1 ;
             report "tb_event_table_manager: FAIL - " & name & " - wrong requires_ack" severity error ;
          end if ;
+         if table_changed /= '1' then
+            errors := errors + 1 ;
+            report "tb_event_table_manager: FAIL - " & name & " - expected table_changed='1' (allocation succeeded)" severity error ;
+         end if ;
       end procedure ;
 
       procedure expect_table_full ( constant name : string ) is
@@ -153,6 +161,10 @@ begin
             errors := errors + 1 ;
             report "tb_event_table_manager: FAIL - " & name & " - expected alloc_unknown_type='0' (it's full, not an unknown type)" severity error ;
          end if ;
+         if table_changed /= '0' then
+            errors := errors + 1 ;
+            report "tb_event_table_manager: FAIL - " & name & " - expected table_changed='0' (allocation failed, table untouched)" severity error ;
+         end if ;
       end procedure ;
 
       procedure expect_unknown_type ( constant name : string ) is
@@ -168,6 +180,10 @@ begin
          if alloc_unknown_type /= '1' then
             errors := errors + 1 ;
             report "tb_event_table_manager: FAIL - " & name & " - expected alloc_unknown_type='1'" severity error ;
+         end if ;
+         if table_changed /= '0' then
+            errors := errors + 1 ;
+            report "tb_event_table_manager: FAIL - " & name & " - expected table_changed='0' (rejected, table untouched)" severity error ;
          end if ;
       end procedure ;
 
@@ -189,6 +205,10 @@ begin
          if release_ok /= exp_ok then
             errors := errors + 1 ;
             report "tb_event_table_manager: FAIL - " & name & " - wrong release_ok" severity error ;
+         end if ;
+         if table_changed /= exp_ok then
+            errors := errors + 1 ;
+            report "tb_event_table_manager: FAIL - " & name & " - table_changed should match release success/failure" severity error ;
          end if ;
       end procedure ;
 
@@ -296,6 +316,10 @@ begin
       full_reset <= '1' ;
       wait until rising_edge(clk) ;
       wait for 1 ns ;
+      if table_changed /= '1' then
+         errors := errors + 1 ;
+         report "tb_event_table_manager: FAIL - 11) expected table_changed='1' on full_reset" severity error ;
+      end if ;
       full_reset <= '0' ;
 
       ------------------------------------------------------------
