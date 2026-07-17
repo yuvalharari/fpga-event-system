@@ -33,10 +33,14 @@
 --  13) fill the remaining 7 slots -> proves ALL 8 slots came back, --
 --      not just one                                                --
 --  14) one more allocation -> table full again                    --
+--  4b) after filling to 8/8, check the table_used/table_priority/ --
+--      table_instance_id read-out ports (new - what                --
+--      priority_scheduler will read) match the known contents      --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
 use ieee.numeric_std.all ;
+use work.event_system_pkg.all ;
 
 entity tb_event_table_manager is
 end tb_event_table_manager ;
@@ -66,6 +70,10 @@ architecture sim of tb_event_table_manager is
    signal release_done        : std_logic ;
    signal release_ok          : std_logic ;
 
+   signal table_used        : std_logic_vector(0 to 7) ;
+   signal table_priority    : priority_array_t(0 to 7) ;
+   signal table_instance_id : instance_id_array_t(0 to 7) ;
+
    signal sim_done : boolean := false ;
 
 begin
@@ -79,7 +87,8 @@ begin
                  alloc_instance_id => alloc_instance_id, alloc_priority => alloc_priority,
                  alloc_requires_ack => alloc_requires_ack,
                  release_req => release_req, release_instance_id => release_instance_id,
-                 release_done => release_done, release_ok => release_ok ) ;
+                 release_done => release_done, release_ok => release_ok,
+                 table_used => table_used, table_priority => table_priority, table_instance_id => table_instance_id ) ;
 
    clk_gen : process
    begin
@@ -219,6 +228,24 @@ begin
          expect_success( std_logic_vector(to_unsigned(n, 8)), "000", '0',
                           "filler alloc #" & integer'image(n) ) ;
       end loop ;
+
+      ------------------------------------------------------------
+      -- 4b) table is now full (8/8) - check the new table_used/
+      -- table_priority/table_instance_id read-out ports directly
+      ------------------------------------------------------------
+      wait for 1 ns ;
+      if table_used /= "11111111" then
+         errors := errors + 1 ;
+         report "tb_event_table_manager: FAIL - 4b) table_used should be all-1 (8/8 full)" severity error ;
+      end if ;
+      if table_priority(0) /= "111" or table_priority(1) /= "011" or table_priority(2) /= "000" then
+         errors := errors + 1 ;
+         report "tb_event_table_manager: FAIL - 4b) wrong table_priority readout" severity error ;
+      end if ;
+      if table_instance_id(0) /= x"00" or table_instance_id(1) /= x"01" or table_instance_id(7) /= x"07" then
+         errors := errors + 1 ;
+         report "tb_event_table_manager: FAIL - 4b) wrong table_instance_id readout" severity error ;
+      end if ;
 
       ------------------------------------------------------------
       -- 5) 9th allocation - table full

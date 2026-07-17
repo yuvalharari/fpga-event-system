@@ -730,3 +730,86 @@ tb_event_table_manager: ALL TESTS PASSED   Time: 1051 ns
 ```
 
 ---
+
+## event_table_manager (update 3) — `tb_event_table_manager.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** each slot now persists `priority` (not just returns it once
+at allocation time), and the whole table is exposed via three new output
+ports - `table_used`/`table_priority`/`table_instance_id` (spec section
+18.2's `event_table_i`) - so `priority_scheduler` can read it directly.
+Needed a new shared package, `event_system_pkg.vhd` (spec section 18's own
+suggestion), for the generic-width array types on these ports.
+
+**What the testbench checks (new scenario 4b, added after the table fills
+to 8/8):** `table_used` is all-1 (8/8 full); `table_priority` for slots
+0/1/2 match what was allocated (111/011/000); `table_instance_id` for
+slots 0/1/7 match (00/01/07). All previous scenarios (1-14) unchanged and
+still pass.
+
+**Result: ALL TESTS PASSED** — no errors, simulation completed and halted
+on its own.
+
+```
+tb_event_table_manager: ALL TESTS PASSED   Time: 1051 ns
+```
+
+---
+
+## priority_scheduler — `tb_priority_scheduler.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `priority_scheduler` does:** picks the winning event instance out of
+`event_table_manager`'s whole table (spec section 8.2, entity example
+18.2). Winner = highest priority among occupied slots, ties broken by
+lowest `instance_id` (oldest). Preemption of an already-active event
+requires BOTH: the candidate's priority is strictly greater than the
+active event's priority, AND the candidate's priority is >=
+`preempt_threshold` (generic, default 7 - a project-specific design
+decision made with the user: only the single highest priority tier can
+preempt at all, everything else queues by priority and waits for the
+active event to finish naturally, avoiding cascades like "4 preempts 3
+preempts 2 preempts 1" for events not urgent enough to justify
+interrupting). Both conditions together also mean priority 7 never
+preempts another priority-7 event, with no special-casing needed.
+Re-evaluates only on an explicit `reschedule` pulse, not every clock cycle.
+
+Drives a mock table directly rather than a real `event_table_manager` -
+this block only reads a table snapshot, it never writes back, so a direct
+mock keeps scenarios easy to control precisely.
+
+**What the testbench checks:**
+1. Empty table -> `active_valid='0'`.
+2. Two slots at the same priority (3), different `instance_id` -> the
+   lower `instance_id` wins the tie.
+3. Add a lower-priority slot (1) -> no change.
+4. Add a higher-priority slot (6) but below the threshold (7) -> no
+   change (doesn't qualify to preempt).
+5. Add a priority-7 slot -> preempts (meets threshold AND strictly
+   higher).
+6. Release the active (priority-7) slot -> falls back to the next-highest
+   remaining slot (priority 6) - a fresh start, not a preempt.
+7. Release everything -> `active_valid='0'` again, no spurious pulse.
+8. Reschedule again on a still-empty table -> idempotent.
+
+**Bug found and fixed before first run (found during code review, not via
+a failed simulation):** VHDL-93 has no short-circuit `or`/`and` (unlike
+VHDL-2008's `or else`/`and then`) - the original condition
+`active_slot = event_slots or table_used(active_slot) = '0'` would
+evaluate `table_used(active_slot)` even when `active_slot` held the
+sentinel value `event_slots`, an out-of-range array index. Fixed by
+restructuring into nested `if`/`elsif` so `table_used(active_slot)` is
+only ever evaluated after `active_slot` is confirmed to be a valid index.
+
+**Result: ALL TESTS PASSED** — no errors, all 8 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_priority_scheduler: ALL TESTS PASSED   Time: 371 ns
+```
+
+---

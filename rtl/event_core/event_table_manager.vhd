@@ -41,10 +41,16 @@
 --     release_req that same cycle. Per spec 14.2.1 point 4, the   --
 --     instance_id counter is NOT reset (not required, left        --
 --     running).                                                   --
+--   - table_used/table_priority/table_instance_id expose the      --
+--     whole table (spec section 18.2's event_table_i) so           --
+--     priority_scheduler can read it directly - priority is now   --
+--     persisted per slot (not just returned once at allocation    --
+--     time like before) for exactly this reason.                  --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
 use ieee.numeric_std.all ;
+use work.event_system_pkg.all ;
 
 entity event_table_manager is
    generic ( event_slots : positive := 8 ) ;
@@ -73,7 +79,12 @@ entity event_table_manager is
 
           -- release response (one-clock pulse)
           release_done       : out std_logic                    ;
-          release_ok         : out std_logic                     ) ; -- '1' = a matching slot was found and freed, '0' = no such instance
+          release_ok         : out std_logic                    ; -- '1' = a matching slot was found and freed, '0' = no such instance
+
+          -- whole-table read-out, for priority_scheduler (spec section 18.2)
+          table_used         : out std_logic_vector(0 to event_slots - 1)          ;
+          table_priority     : out priority_array_t(0 to event_slots - 1)          ;
+          table_instance_id  : out instance_id_array_t(0 to event_slots - 1)        ) ;
 end event_table_manager ;
 
 architecture arc_event_table_manager of event_table_manager is
@@ -85,10 +96,9 @@ architecture arc_event_table_manager of event_table_manager is
              type_valid   : out std_logic                    ) ;
    end component ;
 
-   type instance_id_array_t is array (0 to event_slots - 1) of std_logic_vector(7 downto 0) ;
-
    signal slot_used         : std_logic_vector(0 to event_slots - 1) ;
-   signal slot_instance_id  : instance_id_array_t ;
+   signal slot_instance_id  : instance_id_array_t(0 to event_slots - 1) ;
+   signal slot_priority     : priority_array_t(0 to event_slots - 1) ;
    signal next_instance_id  : unsigned(7 downto 0) ;
 
    signal rom_priority      : std_logic_vector(2 downto 0) ;
@@ -158,6 +168,7 @@ begin
                elsif free_index < event_slots then
                   slot_used(free_index)        <= '1' ;
                   slot_instance_id(free_index) <= std_logic_vector(next_instance_id) ;
+                  slot_priority(free_index)    <= rom_priority ;
                   alloc_ok                     <= '1' ;
                   alloc_unknown_type           <= '0' ;
                   alloc_instance_id            <= std_logic_vector(next_instance_id) ;
@@ -182,5 +193,9 @@ begin
          end if ;
       end if ;
    end process ;
+
+   table_used        <= slot_used ;
+   table_priority    <= slot_priority ;
+   table_instance_id <= slot_instance_id ;
 
 end arc_event_table_manager ;
