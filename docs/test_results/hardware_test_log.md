@@ -260,3 +260,55 @@ XON/XOFF (that's likely `XFLOW`, not yet tried). Resolution: kept using
 convenience commands are not required for correctness.
 
 ---
+
+## Milestone 7 — `priority_scheduler` LED demo
+
+**Date:** 2026-07-16
+**Tool:** Quartus II 9.1sp2 + COMSH.EXE v2.8, `termb` mode.
+**Device:** Cyclone III EP3C16F484C6 (DE0 board), Add-On card on GPIO_1.
+
+**What was tested:** `priority_scheduler` (spec section 8.2, reduced
+scope) wired to `event_table_manager`'s new `table_changed` output, with
+its decision shown live on LEDs (matching the spec's own days 10-12
+acceptance criteria: "הדגמת מתזמן מבוססת-LED בלבד"). `LEDG1` = some event
+is active; `LEDG2-4` = active slot index in binary.
+
+**Pin assignments added** (`quartus/top_pins.tcl`): `LEDG1`=PIN_J2,
+`LEDG2`=PIN_J3, `LEDG3`=PIN_H1, `LEDG4`=PIN_F2, all 3.3-V LVTTL.
+
+**New source files added to the Quartus project:**
+`rtl/event_core/event_system_pkg.vhd`, `rtl/event_core/priority_scheduler.vhd`.
+
+**Physical test performed (via comsh, "scenario A" - lower priority first,
+then higher):**
+1. `EVT,07,01` (priority 3, MEDICATION_MISSED) -> `ACK,INSTANCE=00`,
+   slot 0 -> `LEDG1` lit, `LEDG2-4`=`000`.
+2. `EVT,01,03` (priority 7, LIFE_THREATENING_EMERGENCY) ->
+   `ACK,INSTANCE=01`, slot 1 -> preempts -> `LEDG1` stays lit,
+   `LEDG2-4`=`001` (LEDG4 only).
+3. `ACK,00` (release the non-active slot 0) -> no visible change, as
+   expected - releasing a slot that isn't the active one doesn't affect
+   the scheduler's decision.
+4. `ACK,01` (release the active slot 1) -> `LEDG1` turns off correctly
+   (no active event left).
+
+**Result: PASS** for the scheduler's actual decisions (preemption,
+no-op on releasing a non-active slot, correctly detecting "no active
+event left") - all matched expectations exactly.
+
+**Cosmetic display quirk found, not fixed (by explicit user choice):**
+after step 4, `LEDG4` stayed lit even though `LEDG1` correctly turned
+off. Root cause: `priority_scheduler`'s `active_index` output is only
+specified to be meaningful `when active_valid='1'` (see the entity's own
+port comment) - when the table empties out, `active_index` simply holds
+its last value rather than being cleared, since nothing in the block's
+contract requires otherwise. On a real LED you can't "ignore" a lit bit
+the way a downstream consumer checking `active_valid` first would - so
+this reads as a stale/confusing indicator, not a logic bug. Proposed fix
+(deferred): gate `LEDG2-4` with `active_valid` at the top level (matching
+the spec's own SW0-3 output-gating principle, section 14.3), so they
+force to `000` whenever `LEDG1` is off. User decided the underlying
+scheduler behavior was sufficiently proven and chose not to apply this
+cosmetic fix for now.
+
+---
