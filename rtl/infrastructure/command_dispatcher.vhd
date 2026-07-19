@@ -20,6 +20,20 @@
 -- here since silently ACKing a bogus instance in a medical        --
 -- monitoring system would give false confidence that something   --
 -- was actually acknowledged).                                    --
+--                                                               --
+-- system_enable gate (spec 14.1 - fixes a real gap found on       --
+-- 2026-07-19: system_master_ctrl's system_enable existed but was  --
+-- never actually wired anywhere to block new events, so EVT       --
+-- commands kept succeeding even while SYSTEM_OFF). Only EVT is    --
+-- gated - checked BEFORE alloc_req is issued, so a blocked EVT    --
+-- never touches event_table_manager at all (no slot/instance_id   --
+-- consumed), matching the spec's event_ingress_arbiter concept.   --
+-- ACK is deliberately NOT gated: spec 14.1 says already-active     --
+-- events keep running in the background during SYSTEM_OFF, and    --
+-- there is no reason an operator shouldn't still be able to        --
+-- acknowledge one. Response: NACK,SYSTEM_OFF (project-defined,     --
+-- same reasoning as NACK,UNKNOWN_INSTANCE above - the spec never   --
+-- names a response text for a rejected-because-OFF event).         --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -37,6 +51,9 @@ entity command_dispatcher is
           instance_id    : in  std_logic_vector(7 downto 0) ;
           cmd_error      : in  std_logic                    ;
           cmd_error_code : in  std_logic_vector(7 downto 0) ;
+
+          -- from system_master_ctrl - gates new EVT commands only (see header)
+          system_enable  : in  std_logic                    ;
 
           -- to event_table_manager (allocation request/response)
           alloc_req          : out std_logic                    ;
@@ -60,6 +77,7 @@ entity command_dispatcher is
           build_nack_unknown_evt  : out std_logic                    ;
           build_nack_table_full   : out std_logic                    ;
           build_nack_unknown_inst : out std_logic                    ;
+          build_nack_system_off   : out std_logic                    ;
           param_byte              : out std_logic_vector(7 downto 0) ) ;
 end command_dispatcher ;
 
@@ -80,6 +98,7 @@ begin
          build_nack_unknown_evt   <= '0' ;
          build_nack_table_full    <= '0' ;
          build_nack_unknown_inst  <= '0' ;
+         build_nack_system_off    <= '0' ;
          param_byte               <= (others => '0') ;
          alloc_req                <= '0' ;
          alloc_event_type         <= (others => '0') ;
@@ -94,6 +113,7 @@ begin
          build_nack_unknown_evt  <= '0' ;
          build_nack_table_full   <= '0' ;
          build_nack_unknown_inst <= '0' ;
+         build_nack_system_off   <= '0' ;
          alloc_req               <= '0' ;
          release_req              <= '0' ;
 
@@ -102,10 +122,14 @@ begin
             when IDLE =>
                if cmd_valid = '1' then
                   if cmd_is_evt = '1' then
-                     alloc_event_type <= event_type ;
-                     alloc_source_id  <= source_id ;
-                     alloc_req        <= '1' ;
-                     state            <= WAIT_ALLOC ;
+                     if system_enable = '0' then
+                        build_nack_system_off <= '1' ; -- rejected before ever reaching event_table_manager
+                     else
+                        alloc_event_type <= event_type ;
+                        alloc_source_id  <= source_id ;
+                        alloc_req        <= '1' ;
+                        state            <= WAIT_ALLOC ;
+                     end if ;
                   else -- cmd_is_ack
                      release_instance_id <= instance_id ;
                      release_req         <= '1' ;

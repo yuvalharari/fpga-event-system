@@ -399,3 +399,48 @@ just in simulation with a scaled-down `active_duration_cycles`).
 **Result: PASS** - user confirmed: "צרבתי וזה עובד בצורה מדויקת!"
 
 ---
+
+## Milestones 12-13 — SYSTEM_OFF ingress fix + `sevenseg_controller`
+
+**Date:** 2026-07-19
+**Tool:** Quartus II 9.1sp2 + Android "Serial Bluetooth Terminal" app.
+**Device:** Cyclone III EP3C16F484C6 (DE0 board), Add-On card on GPIO_1.
+
+**What was tested, combined in one pass:**
+- **Milestone 12:** the `SYSTEM_OFF` ingress bug fix - `command_dispatcher` now rejects `EVT`
+  commands with `NACK,SYSTEM_OFF` while the system is off, checked before `alloc_req` is ever
+  issued. `ACK` stays ungated.
+- **Milestone 13:** `sevenseg_controller` wired to `HEX0`-`HEX3` and `SW9` - `SW9='0'` (default)
+  shows the active event's priority plus a live countdown of seconds remaining until
+  `priority_scheduler`'s timeout; `SW9='1'` shows the active event's `instance_id`, all four
+  digits, decimal, zero-padded.
+
+**Pin assignments added** (`quartus/top_pins.tcl`): `SW9`=PIN_D2; `HEX0`-`HEX3`, each 7 segments
+individually mapped bit-by-bit against the course `de0_pins.tcl` reference (whose `HEX<n>S[0..6]`
+labeling is `[0]=g...[6]=a` - the OPPOSITE bit order from this project's own `HEX<n>(6 downto 0)`
+ports, where bit 6=g...bit 0=a per `sevenseg_controller.vhd`'s encoding - each bit mapped
+individually, not copied 1:1 by index). All 3.3-V LVTTL.
+
+**New source files added to the Quartus project:** `rtl/output/sevenseg_controller.vhd`.
+
+**Compile issue found and fixed along the way (Quartus project setup, not the FPGA design
+itself):** first compile attempt failed with "Node instance u_sevenseg instantiates undefined
+entity sevenseg_controller" - the new file had not yet been added to the Quartus project's file
+list. Fixed via Project > Add/Remove Files in Project.
+
+**Physical test performed (via the phone's Bluetooth terminal):**
+1. Before pressing BUTTON0 (system still off), sent `EVT,01,03` -> `NACK,SYSTEM_OFF` (not ACK),
+   confirming the ingress fix works on real hardware.
+2. Pressed BUTTON0 (SYSTEM_ON).
+3. Sent `EVT,01,03` (priority 7) - `HEX0` showed `7`, `HEX1` blank, `HEX3`/`HEX2` showed a live
+   countdown from `05` down to `00` over 5 real seconds.
+4. Raised `SW9` mid-countdown - display switched immediately to the 4-digit decimal `instance_id`
+   view; lowered `SW9` again - display returned to the priority/countdown view, with the countdown
+   having continued running correctly in the background (not frozen, not reset) while hidden
+   behind the ID view.
+5. Sent no `ACK` at all - once the countdown reached `00`, the event auto-released and the LED
+   chase/display cleared on their own, at the same moment the countdown hit zero.
+
+**Result: PASS** - user confirmed: "צרבתי ובדקתי, הבדיקה עבדה כפי שצריך."
+
+---

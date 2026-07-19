@@ -14,6 +14,7 @@
 --   5) build_nack_unknown_evt     -> "NACK,UNKNOWN_EVENT" (18)   --
 --   6) build_nack_table_full      -> "NACK,TABLE_FULL" (15)      --
 --   7) build_nack_unknown_inst    -> "NACK,UNKNOWN_INSTANCE" (21)--
+--   8) build_nack_system_off      -> "NACK,SYSTEM_OFF" (15)      --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -38,6 +39,7 @@ architecture sim of tb_response_builder is
    signal build_nack_unknown_evt: std_logic := '0' ;
    signal build_nack_table_full : std_logic := '0' ;
    signal build_nack_unknown_inst: std_logic := '0' ;
+   signal build_nack_system_off  : std_logic := '0' ;
    signal param_byte            : std_logic_vector(7 downto 0) := (others => '0') ;
 
    signal resp_data   : std_logic_vector(g_max_resp_len*8-1 downto 0) ;
@@ -54,6 +56,7 @@ begin
                  build_ack => build_ack, build_nack_bad_format => build_nack_bad_format,
                  build_nack_unknown => build_nack_unknown, build_nack_unknown_evt => build_nack_unknown_evt,
                  build_nack_table_full => build_nack_table_full, build_nack_unknown_inst => build_nack_unknown_inst,
+                 build_nack_system_off => build_nack_system_off,
                  param_byte => param_byte,
                  resp_data => resp_data, resp_length => resp_length, resp_ready => resp_ready ) ;
 
@@ -184,6 +187,18 @@ begin
           x"4E", x"4F", x"57", x"4E", x"5F", x"49", x"4E", x"53",
           x"54", x"41", x"4E", x"43", x"45") ,                        -- "NACK,UNKNOWN_INSTANCE"
          "NACK,UNKNOWN_INSTANCE" ) ;
+
+      ------------------------------------------------------------
+      -- 8) NACK,SYSTEM_OFF
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      build_nack_system_off <= '1' ;
+      wait until rising_edge(clk) ;
+      build_nack_system_off <= '0' ;
+      check_response(
+         (x"4E", x"41", x"43", x"4B", x"2C", x"53", x"59", x"53",
+          x"54", x"45", x"4D", x"5F", x"4F", x"46", x"46") ,           -- "NACK,SYSTEM_OFF"
+         "NACK,SYSTEM_OFF" ) ;
 
       if errors = 0 then
          report "tb_response_builder: ALL TESTS PASSED" severity note ;

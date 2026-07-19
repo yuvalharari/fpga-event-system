@@ -995,3 +995,128 @@ tb_event_table_manager: ALL TESTS PASSED   Time: 1171 ns
 ```
 
 ---
+
+## command_dispatcher (update) + response_builder (update 3) — SYSTEM_OFF ingress bug fix
+
+**Date:** 2026-07-19
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** re-reading the spec (section 14.1) against the current design found a real bug -
+`system_master_ctrl`'s `system_enable` was only ever wired to `LEDG0` and `buzzer_controller`'s
+trigger, so `SYSTEM_OFF` never actually blocked new `EVT` commands like the spec requires (and like
+section 21.2's own assertion example checks for). Fixed by adding a `system_enable` input to
+`command_dispatcher`: an `EVT` command is now rejected immediately with a new project-defined
+response, `NACK,SYSTEM_OFF`, checked BEFORE `alloc_req` is ever issued - so a blocked `EVT` never
+touches `event_table_manager` at all (no slot or `instance_id` consumed). `ACK` is deliberately NOT
+gated: the spec says already-active events keep running in the background during `SYSTEM_OFF`, so
+they must stay acknowledgeable.
+
+**What the testbenches check:**
+- `tb_response_builder` (new scenario 8): `build_nack_system_off` -> `"NACK,SYSTEM_OFF"` (15 chars),
+  byte-for-byte, same thoroughness as every other response type.
+- `tb_command_dispatcher` (new scenarios 10-11): with `system_enable='0'`, an `EVT` produces
+  `build_nack_system_off` in a single cycle and `alloc_req` never asserts at all (scenario 10); an
+  `ACK` for a real occupied instance still succeeds normally with `system_enable='0'` (scenario 11) -
+  proving only `EVT` is gated, not `ACK`. All 9 pre-existing scenarios re-verified unchanged
+  (`system_enable` defaults to `'1'` for them).
+
+**Result: ALL TESTS PASSED** — both testbenches, no errors, simulation completed and halted on its
+own.
+
+```
+tb_response_builder: ALL TESTS PASSED   Time: 371 ns
+tb_command_dispatcher: ALL TESTS PASSED   Time: 1371 ns
+```
+
+Full-project `vcom` recompile (all `rtl/` + `lib/course_blocks/` sources, including
+`event_system_top.vhd`) also re-verified clean after this change.
+
+---
+
+## sevenseg_controller — `tb_sevenseg_controller.vhd`
+
+**Date:** 2026-07-19
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `sevenseg_controller` does:** drives the DE0's four 7-segment displays with two views,
+toggled live by `SW9` (project's own reduced design, NOT the spec's multi-page cycling scheme -
+section 13.3 - see project memory "final product vision"):
+- `SW9='1'`: the active event's `instance_id`, all FOUR digits, DECIMAL, zero-padded (0000-0255) -
+  deliberately decimal, not hex, even though `instance_id` is an 8-bit binary counter and the
+  phone's `ACK,INSTANCE=<hex>` response is hex, for readability to a non-technical viewer looking
+  only at the board (the two representations won't visually match for values >= 10 - an accepted,
+  deliberate inconsistency).
+- `SW9='0'` (default): `hex0` = active event's priority (0-7); `hex1` = blank (visual gap);
+  `hex3`/`hex2` = a LIVE COUNTDOWN of seconds remaining until `priority_scheduler`'s active-duration
+  timeout fires for this event (zero-padded two digits, e.g. "05"->"04"->...->"00", saturating at
+  0). Added after discussing what to do with the two spare digits once the ID view moved to using
+  all four. The countdown is a SEPARATE internal counter (not a value read out of
+  `priority_scheduler`), driven by a new `event_start_pulse` input (the caller ORs together
+  `priority_scheduler`'s `start_pulse` and `preempt_pulse`) plus `active_valid` - re-deriving the
+  same reset conditions `priority_scheduler`'s own internal `duration_count` uses, WITHOUT touching
+  that already hardware-verified block. The two stay in lockstep as long as
+  `clk_hz * duration_seconds` here equals `priority_scheduler`'s `active_duration_cycles` - both
+  set from the same numbers (50,000,000 and 5) at the top level.
+
+All four digits blank when `active_valid='0'` (idle/safe-output-state), overriding both views.
+`SW9` is only 2-flop synchronized (no debounce needed - unlike a button pulse, a few ms of display
+flicker while the switch settles is harmless); `event_start_pulse` is already a clean one-clock
+pulse from `priority_scheduler` via the top level, so it needs no synchronization of its own.
+Binary-to-decimal is plain integer division/modulo on bounded ranges, synthesizing as small
+combinational circuits (same spirit as `led_pattern_controller`'s literal-constant division).
+
+**What the testbench checks** (generics overridden to `clk_hz=10, duration_seconds=5` - a
+simulation-friendly "1 second = 10 clock cycles" instead of the real 50,000,000, so the full
+50-cycle countdown is checkable directly with exact-cycle expectations):
+1. Reset default (`active_valid='0'`) -> all four digits blank.
+2. Instance_id view (`sw9='1'`, after the 2-cycle sync), all four digits, decimal spot-checked at
+   0, 5, 42, 100, and 255 (max) -> "0000", "0005", "0042", "0100", "0255".
+3. Priority view (`sw9='0'`): a fresh `event_start_pulse` starts the countdown at
+   `duration_seconds=5` (`hex3`="0", `hex2`="5"), `hex1` blank, `hex0`=priority digit.
+4. The countdown decrements by exactly 1 every `clk_hz` cycles, checked all the way down through 0.
+5. Once at 0, it stays at 0 for two more full seconds' worth of cycles (saturates, does not wrap).
+6. The countdown keeps running in the background even while `sw9='1'` (ID view shown) - switching
+   views does NOT pause or reset it: 2 full seconds pass hidden behind the ID view, and once back
+   on the priority view the countdown correctly shows 5-2=3 (not still 5 as if frozen, not reset to
+   5 as if the switch itself restarted it). This was explicitly re-verified after the user flagged
+   it as a requirement not directly exercised by the earlier scenario set.
+7. A fresh `event_start_pulse` mid/post-countdown resets it back to 5 (and priority updates too).
+8. `active_valid='0'` blanks everything regardless of `sw9`/countdown state.
+
+**Result: ALL TESTS PASSED** — no errors, all 8 scenarios passed, simulation completed and halted
+on its own.
+
+```
+tb_sevenseg_controller: ALL TESTS PASSED   Time: 2172 ns
+```
+
+---
+
+## priority_scheduler (update 2) — `tb_priority_scheduler.vhd`
+
+**Date:** 2026-07-19
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** no RTL change - a new scenario (10) added to explicitly verify a design
+guarantee the user asked about: does a preempted event keep its place in the queue, or get pushed
+behind newer arrivals? Preemption never touches `event_table_manager` at all (the preempted event
+keeps occupying its slot with its original, older `instance_id`), and the existing winner-selection
+tie-break rule (`priority_scheduler`'s own header, spec 8.2) already breaks ties by lowest
+`instance_id` (= oldest). Combined, these mean a preempted event automatically outranks any
+same-priority event that arrived later, once the preemptor releases - no code change was needed,
+just proof.
+
+**What the testbench checks (new scenario 10):** A (priority 4, `instance_id=30`) becomes active;
+B (priority 7) preempts A; C (priority 4, SAME priority as A but a NEWER `instance_id=32`) arrives
+while B is still active - does not disturb B (priority 4 doesn't preempt 7); B releases - A (not C)
+wins the tie and becomes active again, proving it was never "pushed to the back of the queue"
+despite having been preempted.
+
+**Result: ALL TESTS PASSED** — no errors, all 10 scenarios passed (including the pre-existing 9),
+simulation completed and halted on its own.
+
+```
+tb_priority_scheduler: ALL TESTS PASSED   Time: 911 ns
+```
+
+---

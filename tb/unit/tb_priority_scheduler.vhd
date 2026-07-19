@@ -31,6 +31,16 @@
 --      expected cycle, does not refire the next cycle, and         --
 --      active_valid stays '1' (release is the caller's job, not    --
 --      this DUT's - see priority_scheduler's own header)           --
+--  10) a preempted event keeps its seniority: A (pri 4, older id)   --
+--      is active, gets preempted by B (pri 7). While B is active,  --
+--      C (pri 4, SAME priority as A but a NEWER id) arrives - does --
+--      not preempt B (as expected). Once B is released, A must win --
+--      the tie against C and become active again (not C) - proving --
+--      a preempted event is never "pushed to the back of the       --
+--      queue": preemption never touches the table, so the           --
+--      preempted event keeps its original (older) instance_id, and --
+--      the existing oldest-wins tie-break rule already guarantees   --
+--      it outranks anything that arrived later at the same priority --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -248,6 +258,40 @@ begin
          errors := errors + 1 ;
          report "tb_priority_scheduler: FAIL - 9e) active_valid should remain '1' after timeout (release is external)" severity error ;
       end if ;
+
+      ------------------------------------------------------------
+      -- 10) a preempted event keeps its seniority over a newer
+      -- same-priority arrival
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      clear_slot( 0 ) ; -- clean slate (was occupied by scenario 9's event)
+      do_reschedule ;
+
+      wait until rising_edge(clk) ;
+      set_slot( 0, 4, 30 ) ; -- A: priority 4, instance_id=30 (older)
+      do_reschedule ;
+      expect( '1', 0, '1', '0', "10a) A becomes active (fresh start)" ) ;
+
+      wait until rising_edge(clk) ;
+      set_slot( 1, 7, 31 ) ; -- B: priority 7 - preempts A
+      do_reschedule ;
+      expect( '1', 1, '0', '1', "10b) B preempts A" ) ;
+
+      wait until rising_edge(clk) ;
+      set_slot( 2, 4, 32 ) ; -- C: priority 4 (same as A), but NEWER id - arrives while B is active
+      do_reschedule ;
+      expect( '1', 1, '0', '0', "10c) C's arrival does not disturb B (priority 4 does not preempt 7)" ) ;
+
+      wait until rising_edge(clk) ;
+      clear_slot( 1 ) ; -- B releases
+      do_reschedule ;
+      expect( '1', 0, '1', '0', "10d) A (older, preempted earlier) wins the tie over C, not pushed behind it" ) ;
+
+      -- clean up so this scenario doesn't leak state if more scenarios are added later
+      wait until rising_edge(clk) ;
+      clear_slot( 0 ) ;
+      clear_slot( 2 ) ;
+      do_reschedule ;
 
       if errors = 0 then
          report "tb_priority_scheduler: ALL TESTS PASSED" severity note ;

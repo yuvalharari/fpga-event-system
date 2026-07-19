@@ -87,6 +87,37 @@
 -- own ACK handshake). table_changed then naturally brings the        --
 -- scheduler back around to the next queued event, or idle if none    --
 -- remain - no other logic needed to change.                          --
+--                                                               --
+-- Milestone 12: fixed a real bug found by re-reading the spec     --
+-- against the current design (2026-07-19) - system_master_ctrl's  --
+-- system_enable was only ever wired to LEDG0 and buzzer_          --
+-- controller's trigger, so SYSTEM_OFF never actually blocked new  --
+-- EVT commands like spec section 14.1 requires. Fixed by gating   --
+-- command_dispatcher's EVT path on system_enable (checked BEFORE  --
+-- alloc_req is issued, so a blocked EVT never touches              --
+-- event_table_manager at all) - new response NACK,SYSTEM_OFF.     --
+-- ACK is deliberately NOT gated (already-active events keep         --
+-- running during SYSTEM_OFF per spec, so they must stay             --
+-- acknowledgeable).                                                 --
+--                                                               --
+-- Milestone 13: sevenseg_controller wired in, driving HEX0-HEX3.   --
+-- Two views toggled live by SW9 (project's own reduced design,     --
+-- NOT the spec's multi-page cycling - see project memory "final    --
+-- product vision"): SW9='1' shows the active event's instance_id,   --
+-- all four digits, decimal, zero-padded; SW9='0' (default) shows    --
+-- its priority (hex0) plus a live countdown of seconds remaining    --
+-- until priority_scheduler's timeout fires (hex3/hex2), with hex1   --
+-- left blank as a visual gap. active_instance_id is looked up the   --
+-- same way active_priority already is - from event_table_manager's --
+-- table_instance_id using the scheduler's active_index. The         --
+-- countdown is driven by sched_event_start (start_pulse OR           --
+-- preempt_pulse ORed together - "a new/different event just         --
+-- became active") - a separate counter inside sevenseg_controller,   --
+-- not a value read out of priority_scheduler itself, so that         --
+-- already-verified block stays untouched (see sevenseg_controller's --
+-- own header for the full reasoning and the lockstep requirement     --
+-- between its clk_hz*duration_seconds and priority_scheduler's       --
+-- active_duration_cycles).                                           --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -110,7 +141,12 @@ entity event_system_top is
           LEDG9    : out std_logic ;
           RX2_BT   : in  std_logic ; -- Add-On board HC-06 Bluetooth UART, FPGA receive
           TX2_BT   : out std_logic ; -- Add-On board HC-06 Bluetooth UART, FPGA transmit
-          SPEAKER  : out std_logic ) ; -- Add-On board passive piezo buzzer
+          SPEAKER  : out std_logic ; -- Add-On board passive piezo buzzer
+          SW9      : in  std_logic ; -- 7-segment view toggle: '0'=priority, '1'=instance_id
+          HEX0     : out std_logic_vector(6 downto 0) ; -- rightmost digit
+          HEX1     : out std_logic_vector(6 downto 0) ;
+          HEX2     : out std_logic_vector(6 downto 0) ;
+          HEX3     : out std_logic_vector(6 downto 0) ) ; -- leftmost digit
 end event_system_top ;
 
 architecture arc_event_system_top of event_system_top is
@@ -216,6 +252,7 @@ architecture arc_event_system_top of event_system_top is
              instance_id    : in  std_logic_vector(7 downto 0) ;
              cmd_error      : in  std_logic                    ;
              cmd_error_code : in  std_logic_vector(7 downto 0) ;
+             system_enable  : in  std_logic                    ;
              alloc_req          : out std_logic                    ;
              alloc_event_type   : out std_logic_vector(7 downto 0) ;
              alloc_source_id    : out std_logic_vector(7 downto 0) ;
@@ -233,6 +270,7 @@ architecture arc_event_system_top of event_system_top is
              build_nack_unknown_evt  : out std_logic                    ;
              build_nack_table_full   : out std_logic                    ;
              build_nack_unknown_inst : out std_logic                    ;
+             build_nack_system_off   : out std_logic                    ;
              param_byte              : out std_logic_vector(7 downto 0) ) ;
    end component ;
 
@@ -300,6 +338,22 @@ architecture arc_event_system_top of event_system_top is
              leds            : out std_logic_vector(num_leds - 1 downto 0) ) ;
    end component ;
 
+   component sevenseg_controller
+      generic ( clk_hz           : integer  := 50_000_000 ;
+                duration_seconds : positive := 5            ) ;
+      port ( resetN             : in  std_logic ;
+             clk                : in  std_logic ;
+             active_valid       : in  std_logic ;
+             active_priority    : in  std_logic_vector(2 downto 0) ;
+             active_instance_id : in  std_logic_vector(7 downto 0) ;
+             event_start_pulse  : in  std_logic ;
+             sw9                : in  std_logic ;
+             hex0               : out std_logic_vector(6 downto 0) ;
+             hex1               : out std_logic_vector(6 downto 0) ;
+             hex2               : out std_logic_vector(6 downto 0) ;
+             hex3               : out std_logic_vector(6 downto 0) ) ;
+   end component ;
+
    component response_builder
       generic ( max_response_length : positive := 32 ) ;
       port ( resetN                 : in  std_logic                                          ;
@@ -310,6 +364,7 @@ architecture arc_event_system_top of event_system_top is
              build_nack_unknown_evt : in  std_logic                                          ;
              build_nack_table_full  : in  std_logic                                          ;
              build_nack_unknown_inst: in  std_logic                                          ;
+             build_nack_system_off  : in  std_logic                                          ;
              param_byte             : in  std_logic_vector(7 downto 0)                       ;
              resp_data              : out std_logic_vector(max_response_length*8-1 downto 0) ;
              resp_length            : out std_logic_vector(7 downto 0)                       ;
@@ -389,9 +444,11 @@ architecture arc_event_system_top of event_system_top is
    signal sched_start_pulse   : std_logic ;
    signal sched_preempt_pulse : std_logic ;
    signal sched_timeout_pulse : std_logic ;
+   signal sched_event_start   : std_logic ; -- start_pulse OR preempt_pulse - "a (new) event just became active"
 
-   signal active_priority : std_logic_vector(2 downto 0) ;
-   signal leds            : std_logic_vector(8 downto 0) ; -- LEDG1(0) .. LEDG9(8)
+   signal active_priority    : std_logic_vector(2 downto 0) ;
+   signal active_instance_id : std_logic_vector(7 downto 0) ;
+   signal leds               : std_logic_vector(8 downto 0) ; -- LEDG1(0) .. LEDG9(8)
 
    signal build_ack               : std_logic ;
    signal build_nack_bad_format   : std_logic ;
@@ -399,6 +456,7 @@ architecture arc_event_system_top of event_system_top is
    signal build_nack_unknown_evt  : std_logic ;
    signal build_nack_table_full   : std_logic ;
    signal build_nack_unknown_inst : std_logic ;
+   signal build_nack_system_off   : std_logic ;
    signal param_byte              : std_logic_vector(7 downto 0) ;
 
    signal resp_data   : std_logic_vector(32*8-1 downto 0) ;
@@ -494,6 +552,7 @@ begin
                  instance_id    => instance_id    ,
                  cmd_error      => cmd_error      ,
                  cmd_error_code => cmd_error_code ,
+                 system_enable  => system_enable  ,
                  alloc_req          => alloc_req          ,
                  alloc_event_type   => alloc_event_type   ,
                  alloc_source_id    => alloc_source_id    ,
@@ -511,6 +570,7 @@ begin
                  build_nack_unknown_evt  => build_nack_unknown_evt   ,
                  build_nack_table_full   => build_nack_table_full    ,
                  build_nack_unknown_inst => build_nack_unknown_inst  ,
+                 build_nack_system_off   => build_nack_system_off    ,
                  param_byte              => param_byte               ) ;
 
    u_event_table : event_table_manager
@@ -552,7 +612,8 @@ begin
                  preempt_pulse     => sched_preempt_pulse ,
                  timeout_pulse     => sched_timeout_pulse ) ;
 
-   active_priority <= table_priority(sched_active_index) ;
+   active_priority    <= table_priority(sched_active_index) ;
+   active_instance_id <= table_instance_id(sched_active_index) ;
 
    -- active-duration timeout -> auto-release the timed-out instance from
    -- event_table_manager (Milestone 11, see priority_scheduler/
@@ -568,6 +629,22 @@ begin
                  active_valid    => sched_active_valid ,
                  active_priority => active_priority    ,
                  leds            => leds               ) ;
+
+   sched_event_start <= sched_start_pulse or sched_preempt_pulse ;
+
+   u_sevenseg : sevenseg_controller
+      generic map ( clk_hz => 50_000_000, duration_seconds => 5 )
+      port map ( resetN             => resetN            ,
+                 clk                => CLOCK_50           ,
+                 active_valid       => sched_active_valid ,
+                 active_priority    => active_priority    ,
+                 active_instance_id => active_instance_id ,
+                 event_start_pulse  => sched_event_start  ,
+                 sw9                => SW9                ,
+                 hex0               => HEX0               ,
+                 hex1               => HEX1               ,
+                 hex2               => HEX2               ,
+                 hex3               => HEX3               ) ;
 
    LEDG1 <= leds(0) ;
    LEDG2 <= leds(1) ;
@@ -597,6 +674,7 @@ begin
                  build_nack_unknown_evt => build_nack_unknown_evt ,
                  build_nack_table_full  => build_nack_table_full  ,
                  build_nack_unknown_inst=> build_nack_unknown_inst,
+                 build_nack_system_off  => build_nack_system_off  ,
                  param_byte             => param_byte             ,
                  resp_data              => resp_data              ,
                  resp_length            => resp_length            ,
