@@ -73,6 +73,34 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX1
 set_location_assignment PIN_G3 -to BUTTON1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to BUTTON1
+set_location_assignment PIN_J2 -to LEDG1
+set_location_assignment PIN_J3 -to LEDG2
+set_location_assignment PIN_H1 -to LEDG3
+set_location_assignment PIN_F2 -to LEDG4
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG1
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG2
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG3
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG4
+set_location_assignment PIN_V7 -to TX2_BT
+set_location_assignment PIN_U8 -to RX2_BT
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX2_BT
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX2_BT
+set_location_assignment PIN_E1 -to LEDG5
+set_location_assignment PIN_C1 -to LEDG6
+set_location_assignment PIN_C2 -to LEDG7
+set_location_assignment PIN_B2 -to LEDG8
+set_location_assignment PIN_B1 -to LEDG9
+set_location_assignment PIN_W17 -to SPEAKER
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG5
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG6
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG7
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG8
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG9
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to SPEAKER
+set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/lib/course_blocks/audio_gen.vhd"
+set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/lib/course_blocks/pacer.vhd"
+set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/output/buzzer_controller.vhd"
+set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/output/led_pattern_controller.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/event_core/event_system_pkg.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/event_core/priority_scheduler.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/event_core/event_definition_rom.vhd"
@@ -94,12 +122,4 @@ set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/V
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/rtl/event_system_top.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/lib/course_blocks/clean_key.vhd"
 set_global_assignment -name VHDL_FILE "../../../../Users/User/OneDrive/Desktop/VHDL Project/lib/course_blocks/gozer.vhd"
-set_location_assignment PIN_J2 -to LEDG1
-set_location_assignment PIN_J3 -to LEDG2
-set_location_assignment PIN_H1 -to LEDG3
-set_location_assignment PIN_F2 -to LEDG4
-set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG1
-set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG2
-set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG3
-set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG4
 set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top

@@ -312,3 +312,90 @@ scheduler behavior was sufficiently proven and chose not to apply this
 cosmetic fix for now.
 
 ---
+
+## Milestones 8-10 — Bluetooth command channel + `buzzer_controller` + `led_pattern_controller` (combined hardware pass)
+
+**Date:** 2026-07-19
+**Tool:** Quartus II 9.1sp2 + Android "Serial Bluetooth Terminal" app (Kai
+Morich), connected to the Add-On board's HC-06 over Bluetooth Classic (SPP).
+**Device:** Cyclone III EP3C16F484C6 (DE0 board), Add-On card on GPIO_1.
+
+**What was tested, all in one combined pass since none of these three had
+been hardware-verified yet:**
+- **Milestone 8:** the command chain's UART moved from `TX1`/`RX1` (PC/FTDI
+  debug) to `TX2_BT`/`RX2_BT` (the Add-On's HC-06 Bluetooth channel) - same
+  `uart_rx`/`uart_tx`, same 9600 baud, just different physical pins, so
+  testing could be driven from the phone instead of comsh.
+- **Milestone 9:** `buzzer_controller` wired to `SPEAKER` - two triggers
+  only (`system_enable` rising edge, `table_not_empty` rising edge), see
+  project memory "final product vision".
+- **Milestone 10:** `led_pattern_controller` wired to `LEDG1`-`LEDG9`,
+  replacing the old Milestone 7 binary-index demo with a chase animation
+  whose speed scales with the active event's priority.
+
+**Pin assignments added** (`quartus/top_pins.tcl`): `TX2_BT`=PIN_V7,
+`RX2_BT`=PIN_U8, `SPEAKER`=PIN_W17, `LEDG5`=PIN_E1, `LEDG6`=PIN_C1,
+`LEDG7`=PIN_C2, `LEDG8`=PIN_B2, `LEDG9`=PIN_B1, all 3.3-V LVTTL.
+
+**New source files added to the Quartus project:**
+`rtl/output/buzzer_controller.vhd`, `rtl/output/led_pattern_controller.vhd`,
+`lib/course_blocks/pacer.vhd`, `lib/course_blocks/audio_gen.vhd`
+(`gozer.vhd` was already in the project from an earlier milestone).
+
+**Physical test performed (via the phone's Bluetooth terminal, CR+LF line
+endings):**
+1. Pressed BUTTON0 -> `LEDG0` lit + a short beep (buzzer trigger 1).
+2. Sent `EVT,01,03` (priority 7) -> ACK response received correctly over
+   Bluetooth, a second beep (buzzer trigger 2, table went 0->1 events),
+   and the LED chase running across `LEDG1`-`LEDG9` at the fast,
+   priority-7 speed.
+3. Sent a second, lower-priority EVT while the first was still active ->
+   no additional beep (only the empty-to-non-empty edge triggers it), and
+   it queued behind the active event as expected.
+4. Sent `ACK` to release the active instance -> confirmed correct
+   scheduler hand-off / LED behavior.
+
+**Result: PASS** - Bluetooth command channel, buzzer triggers, and the
+LED chase all confirmed working together on real hardware. User confirmed:
+"מעולה הכל עובד מושלם!"
+
+**Compile issue found and fixed along the way (Quartus project setup, not
+the FPGA design itself):** first compile attempt failed with "Node instance
+u_pacer/u_audio_gen instantiates undefined entity" - `pacer.vhd` and
+`audio_gen.vhd` (used internally by `buzzer_controller`) had not yet been
+added to the Quartus project's file list (`gozer.vhd` had been, from an
+earlier block). Fixed via Project > Add/Remove Files in Project.
+
+---
+
+## Milestone 11 — `priority_scheduler` active-duration timeout (auto-release)
+
+**Date:** 2026-07-19
+**Tool:** Quartus II 9.1sp2 + Android "Serial Bluetooth Terminal" app.
+**Device:** Cyclone III EP3C16F484C6 (DE0 board), Add-On card on GPIO_1.
+
+**What was tested:** the new active-duration timeout (project-specific
+addition beyond the spec, see `priority_scheduler.vhd`'s header and
+project memory "scheduler active-duration timeout" for the full design
+reasoning). Every active event now gets a real 5-second budget
+(`active_duration_cycles=250_000_000` @ 50MHz) before
+`priority_scheduler`'s `timeout_pulse` auto-releases it from
+`event_table_manager` via the independent `auto_release_req` path -
+without ever touching `command_dispatcher`'s ACK handshake.
+
+**Pin assignments / new source files:** none - this milestone only
+changed logic inside already-instantiated blocks (`event_table_manager.vhd`,
+`priority_scheduler.vhd`, `event_system_top.vhd`), so the existing Quartus
+project file list and pin assignments needed no changes, just a
+recompile.
+
+**Physical test performed:** sent `EVT,01,03` over Bluetooth (fast,
+priority-7 LED chase started as expected) and deliberately did **not**
+send an ACK - just waited. After exactly ~5 real seconds, the LED chase
+stopped on its own with no further command sent, confirming the event was
+auto-released from the table purely by the timeout, on real silicon (not
+just in simulation with a scaled-down `active_duration_cycles`).
+
+**Result: PASS** - user confirmed: "צרבתי וזה עובד בצורה מדויקת!"
+
+---

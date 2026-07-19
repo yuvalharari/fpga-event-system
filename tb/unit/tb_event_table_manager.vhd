@@ -38,6 +38,13 @@
 --      priority_scheduler will read) match the known contents      --
 --  table_changed is also checked throughout: '1' on every           --
 --  successful alloc/release/full_reset, '0' on every failed one    --
+--  15) auto_release_req frees an occupied instance (instance_id=12)--
+--      WITHOUT pulsing release_done/release_ok - proves it's fully --
+--      independent of the manual ACK path (release_req)            --
+--  16) auto_release_req on the same, now-free instance again ->     --
+--      silent no-op, table_changed='0'                              --
+--  17) a normal allocation right after succeeds, proving the slot  --
+--      auto-release freed is genuinely usable (table was full)     --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -72,6 +79,9 @@ architecture sim of tb_event_table_manager is
    signal release_done        : std_logic ;
    signal release_ok          : std_logic ;
 
+   signal auto_release_req         : std_logic := '0' ;
+   signal auto_release_instance_id : std_logic_vector(7 downto 0) := (others => '0') ;
+
    signal table_used        : std_logic_vector(0 to 7) ;
    signal table_priority    : priority_array_t(0 to 7) ;
    signal table_instance_id : instance_id_array_t(0 to 7) ;
@@ -91,6 +101,7 @@ begin
                  alloc_requires_ack => alloc_requires_ack,
                  release_req => release_req, release_instance_id => release_instance_id,
                  release_done => release_done, release_ok => release_ok,
+                 auto_release_req => auto_release_req, auto_release_instance_id => auto_release_instance_id,
                  table_used => table_used, table_priority => table_priority, table_instance_id => table_instance_id,
                  table_changed => table_changed ) ;
 
@@ -346,6 +357,48 @@ begin
       wait until rising_edge(clk) ;
       request_alloc( x"01", x"0D" ) ;
       expect_table_full( "alloc after post-reset table refilled (should be full again)" ) ;
+
+      ------------------------------------------------------------
+      -- 15) auto_release_req frees an occupied instance (id=12)
+      -- WITHOUT pulsing release_done - independent of the manual
+      -- ACK path (release_req), see DUT header
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      auto_release_instance_id <= x"0C" ; -- instance_id=12
+      auto_release_req         <= '1' ;
+      wait until rising_edge(clk) ;
+      wait for 1 ns ;
+      auto_release_req <= '0' ;
+      if table_changed /= '1' then
+         errors := errors + 1 ;
+         report "tb_event_table_manager: FAIL - 15) expected table_changed='1' (auto-release succeeded)" severity error ;
+      end if ;
+      if release_done /= '0' then
+         errors := errors + 1 ;
+         report "tb_event_table_manager: FAIL - 15) release_done must stay '0' - auto-release is independent of the manual ACK path" severity error ;
+      end if ;
+
+      ------------------------------------------------------------
+      -- 16) auto-release the same instance again - already free,
+      -- silent no-op
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      auto_release_instance_id <= x"0C" ;
+      auto_release_req         <= '1' ;
+      wait until rising_edge(clk) ;
+      wait for 1 ns ;
+      auto_release_req <= '0' ;
+      if table_changed /= '0' then
+         errors := errors + 1 ;
+         report "tb_event_table_manager: FAIL - 16) auto-release of an already-free instance should not touch table_changed" severity error ;
+      end if ;
+
+      ------------------------------------------------------------
+      -- 17) confirm the slot auto-release freed is genuinely usable
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      request_alloc( x"01", x"0E" ) ;
+      expect_success( x"11", "111", '1', "alloc after auto-release freed a slot (instance_id=17)" ) ;
 
       if errors = 0 then
          report "tb_event_table_manager: ALL TESTS PASSED" severity note ;

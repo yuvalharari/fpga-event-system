@@ -60,6 +60,18 @@
 --     at the moment table_changed reads '1', with no stale-data    --
 --     race (VHDL-93 has no other easy way to express "wait for     --
 --     this signal update" across entities).                        --
+--   - auto_release_req/auto_release_instance_id: a SECOND, fully    --
+--     independent release path, driven by priority_scheduler's     --
+--     timeout_pulse (a slot's active-duration budget expired), not  --
+--     by command_dispatcher's ACK handshake. Deliberately NOT       --
+--     merged into release_req/release_done: command_dispatcher      --
+--     waits for release_done as the completion signal for ITS OWN   --
+--     ACK request, and would misinterpret a scheduler-driven         --
+--     release_done pulse as its own request finishing, sending a    --
+--     bogus ACK response over the UART for a command nobody sent.   --
+--     Auto-release has no done/ok pulse of its own - the table      --
+--     mutation and table_changed are the only observable effects,   --
+--     since nothing needs to be told "the timeout release finished".--
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -95,6 +107,12 @@ entity event_table_manager is
           release_done       : out std_logic                    ;
           release_ok         : out std_logic                    ; -- '1' = a matching slot was found and freed, '0' = no such instance
 
+          -- auto-release request (one-clock pulse, from priority_scheduler's
+          -- timeout_pulse) - independent of release_req/release_done above,
+          -- see header comment. No done/ok pulse: nothing needs one.
+          auto_release_req         : in  std_logic                    ;
+          auto_release_instance_id : in  std_logic_vector(7 downto 0) ;
+
           -- whole-table read-out, for priority_scheduler (spec section 18.2)
           table_used         : out std_logic_vector(0 to event_slots - 1)          ;
           table_priority     : out priority_array_t(0 to event_slots - 1)          ;
@@ -126,6 +144,7 @@ architecture arc_event_table_manager of event_table_manager is
 
    signal free_index        : integer range 0 to event_slots ; -- = event_slots means "table full"
    signal match_index       : integer range 0 to event_slots ; -- = event_slots means "no such instance"
+   signal auto_match_index  : integer range 0 to event_slots ; -- = event_slots means "no such instance"
 
 begin
 
@@ -157,6 +176,19 @@ begin
          end if ;
       end loop ;
       match_index <= idx ;
+   end process ;
+
+   -- combinational search for the (at most one) used slot holding auto_release_instance_id
+   find_auto_match : process (slot_used, slot_instance_id, auto_release_instance_id)
+      variable idx : integer range 0 to event_slots ;
+   begin
+      idx := event_slots ;
+      for i in 0 to event_slots - 1 loop
+         if slot_used(i) = '1' and slot_instance_id(i) = auto_release_instance_id and idx = event_slots then
+            idx := i ;
+         end if ;
+      end loop ;
+      auto_match_index <= idx ;
    end process ;
 
    process (resetN, clk)
@@ -213,6 +245,15 @@ begin
                else
                   release_ok <= '0' ; -- no slot currently holds this instance_id
                end if ;
+            end if ;
+
+            if auto_release_req = '1' and auto_match_index < event_slots then
+               slot_used(auto_match_index) <= '0' ;
+               table_changed                <= '1' ;
+               -- no done/ok pulse - see header comment. If the instance was
+               -- already released some other way in the meantime (e.g. a
+               -- manual ACK raced ahead of this timeout), auto_match_index
+               -- simply won't match anything and this is a harmless no-op.
             end if ;
          end if ;
       end if ;

@@ -926,3 +926,72 @@ tb_led_pattern_controller: ALL TESTS PASSED
 ```
 
 ---
+
+## priority_scheduler (update) — `tb_priority_scheduler.vhd`
+
+**Date:** 2026-07-19
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** added an active-duration timeout (project-specific
+addition, not in the spec's own interface - decided this session, see
+`event_system_top.vhd`'s Milestone 11 comment for the full reasoning). A
+new `active_duration_cycles` generic (default 250,000,000 = 5s @ 50MHz)
+and `timeout_pulse` output. A saturating counter runs while
+`active_valid='1'` and resets to 0 whenever the active slot changes
+(`start_pulse`/`preempt_pulse`) or the scheduler goes idle. When it hits
+the target, `timeout_pulse` fires for exactly one clock (latched so it
+can't refire every cycle while waiting for the caller to actually act on
+it). The DUT itself does not release anything - that's
+`event_table_manager`'s new `auto_release_req` path, driven externally.
+
+**What the testbench checks (new scenario 9, `g_duration=12` cycles):** a
+fresh event stays active with no reschedule for exactly 12 cycles -
+`timeout_pulse` stays `'0'` through cycle 11, fires exactly on cycle 12,
+does not refire on cycle 13, and `active_valid` is unaffected (stays
+`'1'` - release is the caller's job). All 8 pre-existing scenarios re-verified
+unchanged (12-cycle budget is comfortably above the handful of cycles those
+scenarios spend mid-window before their own resets).
+
+**Result: ALL TESTS PASSED** — no errors, simulation completed and halted
+on its own.
+
+```
+tb_priority_scheduler: ALL TESTS PASSED   Time: 671 ns
+```
+
+---
+
+## event_table_manager (update 5) — `tb_event_table_manager.vhd`
+
+**Date:** 2026-07-19
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What changed:** added a second, fully independent release path -
+`auto_release_req`/`auto_release_instance_id` - driven by
+`priority_scheduler`'s new `timeout_pulse` (see above), NOT by
+`command_dispatcher`'s ACK flow. Deliberately kept separate from
+`release_req`/`release_done`: `command_dispatcher` waits for
+`release_done` as the completion signal for its own ACK request, and
+would misinterpret a scheduler-driven `release_done` pulse as its own
+request finishing, sending a bogus ACK response over the UART for a
+command nobody sent. Auto-release has no `done`/`ok` pulse of its own -
+the table mutation and `table_changed` are the only observable effects.
+
+**What the testbench checks (new scenarios 15-17):**
+15. `auto_release_req` frees an occupied instance (id=12) -
+    `table_changed='1'`, and critically `release_done` stays `'0'`
+    (proves isolation from the manual ACK path).
+16. Auto-releasing the same, now-free instance again -> silent no-op,
+    `table_changed='0'`.
+17. A normal allocation right after succeeds (table was full going in),
+    proving the slot auto-release freed is genuinely usable, not just
+    marked free superficially.
+
+**Result: ALL TESTS PASSED** — no errors, all 17 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_event_table_manager: ALL TESTS PASSED   Time: 1171 ns
+```
+
+---

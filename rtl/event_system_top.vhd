@@ -40,14 +40,13 @@
 -- one clock, without touching SYSTEM_ON/OFF or the instance_id   --
 -- counter.                                                        --
 --                                                               --
--- Milestone 7: priority_scheduler wired in (spec section 8.2/    --
--- 23 days 10-12 target: "הדגמת מתזמן מבוססת-LED בלבד" - an       --
--- LED-based scheduler demo only, no script engine needed yet).   --
--- event_table_manager's table_changed drives its reschedule       --
--- input directly (guaranteed-fresh table data, see                --
--- event_table_manager's header). LEDG1 lights whenever some       --
--- event is active; LEDG2-LEDG4 show which slot (binary,           --
--- 0-7) - only meaningful while LEDG1 is lit.                      --
+-- Milestone 7 (superseded by Milestone 10): priority_scheduler     --
+-- wired in (spec section 8.2/23 days 10-12 target: "הדגמת מתזמן   --
+-- מבוססת-LED בלבד"). event_table_manager's table_changed drives    --
+-- its reschedule input directly (guaranteed-fresh table data, see  --
+-- event_table_manager's header). The original LEDG1=active/        --
+-- LEDG2-4=binary-index demo was replaced by the chase animation    --
+-- in Milestone 10.                                                 --
 --                                                               --
 -- Milestone 8: switched the command-chain UART from TX1/RX1 (the --
 -- Add-On's PC/FTDI debug channel) to TX2_BT/RX2_BT (the Add-On's --
@@ -66,6 +65,28 @@
 -- table_not_empty's rising edge (the first event entering an      --
 -- otherwise-empty event_table_manager table). table_not_empty is --
 -- just an OR-reduction of event_table_manager's table_used.       --
+--                                                               --
+-- Milestone 10: led_pattern_controller wired in, replacing the   --
+-- Milestone 7 binary-index LED demo. LEDG1-LEDG9 (LEDG0 stays     --
+-- SYSTEM_ON) now show a chase/marquee animation that runs         --
+-- whenever priority_scheduler has an active event, with speed      --
+-- scaling by that event's priority (project's own reduced design, --
+-- NOT the spec's LED0-7 meaning table - see project memory        --
+-- "final product vision"). active_priority is looked up from       --
+-- event_table_manager's table_priority using the scheduler's       --
+-- active_index.                                                    --
+--                                                               --
+-- Milestone 11: active-duration timeout wired in (project-specific --
+-- addition, see priority_scheduler's own header for the full        --
+-- reasoning). Every active event now gets a fixed 5-second budget    --
+-- (active_duration_cycles=250,000,000 @ 50MHz) before                --
+-- priority_scheduler's timeout_pulse auto-releases it from           --
+-- event_table_manager via the NEW, independent auto_release_req/     --
+-- auto_release_instance_id path (deliberately not the manual         --
+-- release_req/ACK path, to avoid confusing command_dispatcher's      --
+-- own ACK handshake). table_changed then naturally brings the        --
+-- scheduler back around to the next queued event, or idle if none    --
+-- remain - no other logic needed to change.                          --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -78,10 +99,15 @@ entity event_system_top is
           BUTTON1  : in  std_logic ; -- active-low, full event-table reset
           BUTTON2  : in  std_logic ; -- active-low, System OFF
           LEDG0    : out std_logic ; -- lit when SYSTEM_ON
-          LEDG1    : out std_logic ; -- lit when some event is active
-          LEDG2    : out std_logic ; -- active slot index, bit 2 (MSB)
-          LEDG3    : out std_logic ; -- active slot index, bit 1
-          LEDG4    : out std_logic ; -- active slot index, bit 0 (LSB)
+          LEDG1    : out std_logic ; -- chase animation, positions 0-8
+          LEDG2    : out std_logic ;
+          LEDG3    : out std_logic ;
+          LEDG4    : out std_logic ;
+          LEDG5    : out std_logic ;
+          LEDG6    : out std_logic ;
+          LEDG7    : out std_logic ;
+          LEDG8    : out std_logic ;
+          LEDG9    : out std_logic ;
           RX2_BT   : in  std_logic ; -- Add-On board HC-06 Bluetooth UART, FPGA receive
           TX2_BT   : out std_logic ; -- Add-On board HC-06 Bluetooth UART, FPGA transmit
           SPEAKER  : out std_logic ) ; -- Add-On board passive piezo buzzer
@@ -228,6 +254,8 @@ architecture arc_event_system_top of event_system_top is
              release_instance_id : in  std_logic_vector(7 downto 0) ;
              release_done        : out std_logic                    ;
              release_ok          : out std_logic                    ;
+             auto_release_req         : in  std_logic                    ;
+             auto_release_instance_id : in  std_logic_vector(7 downto 0) ;
              table_used         : out std_logic_vector(0 to event_slots - 1)         ;
              table_priority     : out priority_array_t(0 to event_slots - 1)         ;
              table_instance_id  : out instance_id_array_t(0 to event_slots - 1)      ;
@@ -235,8 +263,9 @@ architecture arc_event_system_top of event_system_top is
    end component ;
 
    component priority_scheduler
-      generic ( event_slots       : positive := 8 ;
-                preempt_threshold : natural  := 7 ) ;
+      generic ( event_slots            : positive := 8           ;
+                preempt_threshold      : natural  := 7           ;
+                active_duration_cycles : positive := 250_000_000 ) ;
       port ( resetN         : in  std_logic                                     ;
              clk            : in  std_logic                                     ;
              reschedule     : in  std_logic                                     ;
@@ -246,7 +275,8 @@ architecture arc_event_system_top of event_system_top is
              active_valid   : out std_logic                                     ;
              active_index   : out integer range 0 to event_slots - 1            ;
              start_pulse    : out std_logic                                     ;
-             preempt_pulse  : out std_logic                                      ) ;
+             preempt_pulse  : out std_logic                                     ;
+             timeout_pulse  : out std_logic                                      ) ;
    end component ;
 
    component buzzer_controller
@@ -258,6 +288,16 @@ architecture arc_event_system_top of event_system_top is
              system_enable   : in  std_logic ;
              table_not_empty : in  std_logic ;
              buzzer_out      : out std_logic ) ;
+   end component ;
+
+   component led_pattern_controller
+      generic ( num_leds    : positive := 9         ;
+                base_cycles : positive := 25_000_000 ) ;
+      port ( resetN          : in  std_logic ;
+             clk             : in  std_logic ;
+             active_valid    : in  std_logic ;
+             active_priority : in  std_logic_vector(2 downto 0) ;
+             leds            : out std_logic_vector(num_leds - 1 downto 0) ) ;
    end component ;
 
    component response_builder
@@ -335,6 +375,9 @@ architecture arc_event_system_top of event_system_top is
    signal release_done        : std_logic ;
    signal release_ok          : std_logic ;
 
+   signal auto_release_req         : std_logic ;
+   signal auto_release_instance_id : std_logic_vector(7 downto 0) ;
+
    signal table_used        : std_logic_vector(0 to 7) ;
    signal table_priority    : priority_array_t(0 to 7) ;
    signal table_instance_id : instance_id_array_t(0 to 7) ;
@@ -345,7 +388,10 @@ architecture arc_event_system_top of event_system_top is
    signal sched_active_index  : integer range 0 to 7 ;
    signal sched_start_pulse   : std_logic ;
    signal sched_preempt_pulse : std_logic ;
-   signal sched_active_index_vec : std_logic_vector(2 downto 0) ;
+   signal sched_timeout_pulse : std_logic ;
+
+   signal active_priority : std_logic_vector(2 downto 0) ;
+   signal leds            : std_logic_vector(8 downto 0) ; -- LEDG1(0) .. LEDG9(8)
 
    signal build_ack               : std_logic ;
    signal build_nack_bad_format   : std_logic ;
@@ -485,13 +531,15 @@ begin
                  release_instance_id => release_instance_id ,
                  release_done        => release_done        ,
                  release_ok          => release_ok          ,
+                 auto_release_req         => auto_release_req         ,
+                 auto_release_instance_id => auto_release_instance_id ,
                  table_used         => table_used         ,
                  table_priority     => table_priority     ,
                  table_instance_id  => table_instance_id  ,
                  table_changed      => table_changed      ) ;
 
    u_scheduler : priority_scheduler
-      generic map ( event_slots => 8, preempt_threshold => 7 )
+      generic map ( event_slots => 8, preempt_threshold => 7, active_duration_cycles => 250_000_000 )
       port map ( resetN            => resetN            ,
                  clk               => CLOCK_50           ,
                  reschedule        => table_changed      ,
@@ -501,14 +549,35 @@ begin
                  active_valid      => sched_active_valid ,
                  active_index      => sched_active_index ,
                  start_pulse       => sched_start_pulse  ,
-                 preempt_pulse     => sched_preempt_pulse ) ;
+                 preempt_pulse     => sched_preempt_pulse ,
+                 timeout_pulse     => sched_timeout_pulse ) ;
 
-   sched_active_index_vec <= std_logic_vector(to_unsigned(sched_active_index, 3)) ;
+   active_priority <= table_priority(sched_active_index) ;
 
-   LEDG1 <= sched_active_valid ;
-   LEDG2 <= sched_active_index_vec(2) ;
-   LEDG3 <= sched_active_index_vec(1) ;
-   LEDG4 <= sched_active_index_vec(0) ;
+   -- active-duration timeout -> auto-release the timed-out instance from
+   -- event_table_manager (Milestone 11, see priority_scheduler/
+   -- event_table_manager headers for why this is a separate path from
+   -- the manual release_req/ACK flow)
+   auto_release_req         <= sched_timeout_pulse ;
+   auto_release_instance_id <= table_instance_id(sched_active_index) ;
+
+   u_led_pattern : led_pattern_controller
+      generic map ( num_leds => 9, base_cycles => 25_000_000 )
+      port map ( resetN          => resetN            ,
+                 clk             => CLOCK_50           ,
+                 active_valid    => sched_active_valid ,
+                 active_priority => active_priority    ,
+                 leds            => leds               ) ;
+
+   LEDG1 <= leds(0) ;
+   LEDG2 <= leds(1) ;
+   LEDG3 <= leds(2) ;
+   LEDG4 <= leds(3) ;
+   LEDG5 <= leds(4) ;
+   LEDG6 <= leds(5) ;
+   LEDG7 <= leds(6) ;
+   LEDG8 <= leds(7) ;
+   LEDG9 <= leds(8) ;
 
    table_not_empty <= '0' when table_used = "00000000" else '1' ;
 

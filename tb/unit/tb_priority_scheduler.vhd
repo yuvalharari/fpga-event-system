@@ -23,6 +23,14 @@
 --   7) release everything -> active_valid='0' again               --
 --   8) reschedule again on an still-empty table -> idempotent,    --
 --      no spurious pulses                                         --
+--   9) active-duration timeout (g_duration=12 cycles, small enough --
+--      for sim but comfortably above the handful of cycles         --
+--      scenarios 3-5 spend mid-window before their own resets):    --
+--      a fresh event stays active with no reschedule for exactly   --
+--      12 cycles -> timeout_pulse fires exactly once at the        --
+--      expected cycle, does not refire the next cycle, and         --
+--      active_valid stays '1' (release is the caller's job, not    --
+--      this DUT's - see priority_scheduler's own header)           --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -37,6 +45,7 @@ architecture sim of tb_priority_scheduler is
    constant clk_period  : time     := 20 ns ;
    constant g_slots      : positive := 8 ;
    constant g_threshold  : natural  := 7 ;
+   constant g_duration   : positive := 12 ;
 
    signal clk    : std_logic := '0' ;
    signal resetN : std_logic := '0' ;
@@ -51,18 +60,19 @@ architecture sim of tb_priority_scheduler is
    signal active_index  : integer range 0 to g_slots - 1 ;
    signal start_pulse   : std_logic ;
    signal preempt_pulse : std_logic ;
+   signal timeout_pulse : std_logic ;
 
    signal sim_done : boolean := false ;
 
 begin
 
    dut : entity work.priority_scheduler
-      generic map ( event_slots => g_slots, preempt_threshold => g_threshold )
+      generic map ( event_slots => g_slots, preempt_threshold => g_threshold, active_duration_cycles => g_duration )
       port map ( resetN => resetN, clk => clk,
                  reschedule => reschedule,
                  table_used => table_used, table_priority => table_priority, table_instance_id => table_instance_id,
                  active_valid => active_valid, active_index => active_index,
-                 start_pulse => start_pulse, preempt_pulse => preempt_pulse ) ;
+                 start_pulse => start_pulse, preempt_pulse => preempt_pulse, timeout_pulse => timeout_pulse ) ;
 
    clk_gen : process
    begin
@@ -94,6 +104,19 @@ begin
          wait until rising_edge(clk) ;
          wait for 1 ns ; -- let this edge's registered outputs settle
          reschedule <= '0' ;
+      end procedure ;
+
+      procedure pulse_clock is
+      begin
+         wait until rising_edge(clk) ;
+         wait for 1 ns ;
+      end procedure ;
+
+      procedure wait_cycles ( constant n : natural ) is
+      begin
+         for i in 1 to n loop
+            pulse_clock ;
+         end loop ;
       end procedure ;
 
       procedure expect ( constant exp_valid   : std_logic ;
@@ -190,6 +213,41 @@ begin
       wait until rising_edge(clk) ;
       do_reschedule ;
       expect( '0', 0, '0', '0', "8) reschedule on empty table again - no spurious pulses" ) ;
+
+      ------------------------------------------------------------
+      -- 9) active-duration timeout: a fresh event stays active with
+      -- no reschedule for exactly g_duration cycles - timeout_pulse
+      -- fires exactly once, does not refire, active_valid unaffected
+      ------------------------------------------------------------
+      wait until rising_edge(clk) ;
+      set_slot( 0, 5, 20 ) ;
+      do_reschedule ; -- start edge: duration_count resets to 0 here
+      if timeout_pulse /= '0' then
+         errors := errors + 1 ;
+         report "tb_priority_scheduler: FAIL - 9a) timeout_pulse should not fire on the start edge" severity error ;
+      end if ;
+
+      wait_cycles( g_duration - 1 ) ;
+      if timeout_pulse /= '0' then
+         errors := errors + 1 ;
+         report "tb_priority_scheduler: FAIL - 9b) timeout_pulse fired too early" severity error ;
+      end if ;
+
+      wait_cycles( 1 ) ; -- this is the g_duration-th cycle since the start edge
+      if timeout_pulse /= '1' then
+         errors := errors + 1 ;
+         report "tb_priority_scheduler: FAIL - 9c) timeout_pulse did not fire at the expected cycle" severity error ;
+      end if ;
+
+      wait_cycles( 1 ) ;
+      if timeout_pulse /= '0' then
+         errors := errors + 1 ;
+         report "tb_priority_scheduler: FAIL - 9d) timeout_pulse should not refire the next cycle" severity error ;
+      end if ;
+      if active_valid /= '1' then
+         errors := errors + 1 ;
+         report "tb_priority_scheduler: FAIL - 9e) active_valid should remain '1' after timeout (release is external)" severity error ;
+      end if ;
 
       if errors = 0 then
          report "tb_priority_scheduler: ALL TESTS PASSED" severity note ;

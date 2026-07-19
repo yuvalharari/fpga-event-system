@@ -21,6 +21,11 @@ set_location_assignment PIN_J2  -to LEDG1
 set_location_assignment PIN_J3  -to LEDG2
 set_location_assignment PIN_H1  -to LEDG3
 set_location_assignment PIN_F2  -to LEDG4
+set_location_assignment PIN_E1  -to LEDG5
+set_location_assignment PIN_C1  -to LEDG6
+set_location_assignment PIN_C2  -to LEDG7
+set_location_assignment PIN_B2  -to LEDG8
+set_location_assignment PIN_B1  -to LEDG9
 set_location_assignment PIN_V7  -to TX2_BT
 set_location_assignment PIN_U8  -to RX2_BT
 set_location_assignment PIN_W17 -to SPEAKER
@@ -36,6 +41,11 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG2
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG3
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG4
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG5
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG6
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG7
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG8
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG9
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX2_BT
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX2_BT
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to SPEAKER

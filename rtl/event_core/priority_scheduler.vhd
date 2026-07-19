@@ -37,6 +37,21 @@
 --   - no resume_pulse yet (nothing to resume without              --
 --     preemption_manager) - kept out of the port list for now,   --
 --     unlike the spec's example interface.                       --
+--                                                               --
+-- Active-duration timeout (project-specific addition, not in the --
+-- spec's own interface): the currently-active slot gets a fixed  --
+-- time budget (active_duration_cycles, default 5s @ 50MHz). A    --
+-- saturating counter runs while active_valid='1' and resets to 0 --
+-- whenever the active slot changes (start_pulse or preempt_pulse --
+-- this cycle) or the scheduler goes idle. When the counter hits  --
+-- the target it fires timeout_pulse for exactly one clock         --
+-- (guarded by timed_out_latched so it can't refire every cycle   --
+-- while the event is still waiting to actually be released) -    --
+-- the caller is expected to use this to auto-release the active   --
+-- instance from event_table_manager, which will then bring a      --
+-- reschedule pulse back around and let this same winner-selection --
+-- logic naturally move on to the next queued event (or go idle if --
+-- none remain).                                                   --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -44,8 +59,9 @@ use ieee.numeric_std.all ;
 use work.event_system_pkg.all ;
 
 entity priority_scheduler is
-   generic ( event_slots       : positive := 8 ;
-             preempt_threshold : natural  := 7 ) ; -- min priority a NEW event needs to preempt an active one at all
+   generic ( event_slots           : positive := 8           ;
+             preempt_threshold     : natural  := 7           ; -- min priority a NEW event needs to preempt an active one at all
+             active_duration_cycles : positive := 250_000_000 ) ; -- how long a slot may stay active before timeout_pulse (default 5s @ 50MHz)
    port ( resetN         : in  std_logic                                     ;
           clk            : in  std_logic                                     ;
 
@@ -58,15 +74,22 @@ entity priority_scheduler is
           active_valid   : out std_logic                                     ; -- '1' when some slot is active
           active_index   : out integer range 0 to event_slots - 1            ; -- valid when active_valid='1'
           start_pulse    : out std_logic                                     ; -- one-clock pulse: went from no-active to active
-          preempt_pulse  : out std_logic                                      ) ; -- one-clock pulse: active slot just switched
+          preempt_pulse  : out std_logic                                     ; -- one-clock pulse: active slot just switched
+          timeout_pulse  : out std_logic                                      ) ; -- one-clock pulse: active slot's time budget just expired
 end priority_scheduler ;
 
 architecture arc_priority_scheduler of priority_scheduler is
 
    signal active_slot   : integer range 0 to event_slots ; -- = event_slots means "no active slot"
    signal best_index    : integer range 0 to event_slots ; -- = event_slots means "table empty"
+   signal active_valid_i : std_logic ; -- internal copy of active_valid - VHDL-93 'out' ports cannot be read back
+
+   signal duration_count    : integer range 0 to active_duration_cycles - 1 ;
+   signal timed_out_latched : std_logic ; -- prevents timeout_pulse from refiring every cycle until the slot changes
 
 begin
+
+   active_valid <= active_valid_i ;
 
    -- combinational: highest-priority occupied slot overall, ties broken by lowest instance_id
    find_best : process (table_used, table_priority, table_instance_id)
@@ -94,14 +117,38 @@ begin
    process (resetN, clk)
    begin
       if resetN = '0' then
-         active_slot   <= event_slots ;
-         active_valid  <= '0' ;
-         active_index  <= 0 ;
-         start_pulse   <= '0' ;
-         preempt_pulse <= '0' ;
+         active_slot       <= event_slots ;
+         active_valid_i    <= '0' ;
+         active_index      <= 0 ;
+         start_pulse       <= '0' ;
+         preempt_pulse     <= '0' ;
+         timeout_pulse     <= '0' ;
+         duration_count    <= 0 ;
+         timed_out_latched <= '0' ;
       elsif rising_edge(clk) then
          start_pulse   <= '0' ; -- one-clock pulses, defaulted low every cycle
          preempt_pulse <= '0' ;
+         timeout_pulse <= '0' ;
+
+         -- duration timer: runs every cycle regardless of reschedule,
+         -- saturates once it hits the target (does not wrap), and only
+         -- pulses once per active-slot lifetime. Any state-changing
+         -- branch below (new active slot, preemption, going idle)
+         -- overrides these with an explicit reset since it executes
+         -- later in this same process (last assignment wins).
+         if active_valid_i = '1' then
+            if timed_out_latched = '0' then
+               if duration_count = active_duration_cycles - 1 then
+                  timeout_pulse     <= '1' ;
+                  timed_out_latched <= '1' ;
+               else
+                  duration_count <= duration_count + 1 ;
+               end if ;
+            end if ;
+         else
+            duration_count    <= 0 ;
+            timed_out_latched <= '0' ;
+         end if ;
 
          if reschedule = '1' then
             -- VHDL-93 has no short-circuit "or" - active_slot must be
@@ -111,24 +158,32 @@ begin
             if active_slot = event_slots then
                -- never had an active slot - just take the best, if any
                if best_index < event_slots then
-                  active_slot  <= best_index ;
-                  active_valid <= '1' ;
-                  active_index <= best_index ;
-                  start_pulse  <= '1' ;
+                  active_slot   <= best_index ;
+                  active_valid_i <= '1' ;
+                  active_index  <= best_index ;
+                  start_pulse   <= '1' ;
+                  duration_count    <= 0 ;
+                  timed_out_latched <= '0' ;
                else
-                  active_valid <= '0' ;
+                  active_valid_i <= '0' ;
+                  duration_count    <= 0 ;
+                  timed_out_latched <= '0' ;
                end if ;
 
             elsif table_used(active_slot) = '0' then
                -- the previously-active slot was released - take the best, if any
                if best_index < event_slots then
-                  active_slot  <= best_index ;
-                  active_valid <= '1' ;
-                  active_index <= best_index ;
-                  start_pulse  <= '1' ;
+                  active_slot   <= best_index ;
+                  active_valid_i <= '1' ;
+                  active_index  <= best_index ;
+                  start_pulse   <= '1' ;
+                  duration_count    <= 0 ;
+                  timed_out_latched <= '0' ;
                else
-                  active_slot  <= event_slots ;
-                  active_valid <= '0' ;
+                  active_slot   <= event_slots ;
+                  active_valid_i <= '0' ;
+                  duration_count    <= 0 ;
+                  timed_out_latched <= '0' ;
                end if ;
 
             elsif best_index /= active_slot
@@ -139,6 +194,8 @@ begin
                active_index  <= best_index ;
                preempt_pulse <= '1' ;
                -- active_valid stays '1' - still an active event, just switched slots
+               duration_count    <= 0 ;
+               timed_out_latched <= '0' ;
 
             end if ;
             -- else: current active slot is still the right choice, nothing changes
