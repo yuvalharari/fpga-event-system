@@ -1,5 +1,5 @@
 # Pin assignments for event_system_top - hardware bring-up milestones
-# (BUTTON0/BUTTON2 -> system_master_ctrl -> LEDG0 ; TX1/RX1 -> UART echo test)
+# (BUTTON0/BUTTON2 -> system_master_ctrl -> LEDG0 ; TX2_BT/RX2_BT -> command chain)
 #
 # Run from the Quartus Tcl Console (View > Utility Windows > Tcl Console)
 # with the project already open, or via:
@@ -7,8 +7,10 @@
 #
 # Pin locations confirmed against 3 independent sources: the DE0 schematic,
 # the course de0_pins.tcl, and the official Terasic DE0 User Manual v1.1.
-# TX1/RX1 (the Add-On board's FTDI/PC UART channel) confirmed via the
-# course de0_pins.tcl's "AddOn card placed on JP1" section.
+# TX2_BT/RX2_BT (the Add-On board's HC-06 Bluetooth UART channel) confirmed
+# via the course de0_pins.tcl's "AddOn card placed on JP1" section - the
+# command chain was moved here from TX1/RX1 (FTDI/PC debug) in Milestone 8,
+# so testing can be driven from an Android Bluetooth serial terminal app.
 
 set_location_assignment PIN_G21 -to CLOCK_50
 set_location_assignment PIN_H2  -to BUTTON0
@@ -19,8 +21,8 @@ set_location_assignment PIN_J2  -to LEDG1
 set_location_assignment PIN_J3  -to LEDG2
 set_location_assignment PIN_H1  -to LEDG3
 set_location_assignment PIN_F2  -to LEDG4
-set_location_assignment PIN_R12 -to TX1
-set_location_assignment PIN_T12 -to RX1
+set_location_assignment PIN_V7  -to TX2_BT
+set_location_assignment PIN_U8  -to RX2_BT
 
 # DE0 supplies 3.3V to these I/O banks (schematic + DE0 User Manual) -
 # override Quartus's generic "2.5V (default)" I/O standard to match.
@@ -33,8 +35,8 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG1
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG2
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG3
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG4
-set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX1
-set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX1
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX2_BT
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX2_BT
 
 set_global_assignment -name FAMILY "Cyclone III"
 set_global_assignment -name DEVICE EP3C16F484C6

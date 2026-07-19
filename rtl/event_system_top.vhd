@@ -48,6 +48,16 @@
 -- event_table_manager's header). LEDG1 lights whenever some       --
 -- event is active; LEDG2-LEDG4 show which slot (binary,           --
 -- 0-7) - only meaningful while LEDG1 is lit.                      --
+--                                                               --
+-- Milestone 8: switched the command-chain UART from TX1/RX1 (the --
+-- Add-On's PC/FTDI debug channel) to TX2_BT/RX2_BT (the Add-On's --
+-- HC-06 Bluetooth channel) - same uart_rx/uart_tx, same 9600     --
+-- baud default, just different physical pins, so testing can be  --
+-- driven from an Android Bluetooth serial terminal app instead   --
+-- of comsh. No RTL logic changed, only the pin-facing port names --
+-- and top_pins.tcl. (iOS was ruled out - HC-06 is Bluetooth       --
+-- Classic/SPP, which iOS does not expose to third-party apps      --
+-- without MFi certification.)                                    --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -64,8 +74,8 @@ entity event_system_top is
           LEDG2    : out std_logic ; -- active slot index, bit 2 (MSB)
           LEDG3    : out std_logic ; -- active slot index, bit 1
           LEDG4    : out std_logic ; -- active slot index, bit 0 (LSB)
-          RX1      : in  std_logic ; -- Add-On board FTDI/PC UART, FPGA receive
-          TX1      : out std_logic ) ; -- Add-On board FTDI/PC UART, FPGA transmit
+          RX2_BT   : in  std_logic ; -- Add-On board HC-06 Bluetooth UART, FPGA receive
+          TX2_BT   : out std_logic ) ; -- Add-On board HC-06 Bluetooth UART, FPGA transmit
 end event_system_top ;
 
 architecture arc_event_system_top of event_system_top is
@@ -360,7 +370,7 @@ begin
    u_uart_rx : uart_rx
       port map ( resetN     => resetN        ,
                  clk        => CLOCK_50       ,
-                 rx         => RX1            ,
+                 rx         => RX2_BT         ,
                  read_dout  => '0'            , -- unused: data_valid pulse drives the RX fifo directly
                  data_valid => rx_data_valid  ,
                  dout       => rx_dout        ,
@@ -510,7 +520,7 @@ begin
                  clk       => CLOCK_50     ,
                  din       => tx_din       ,
                  write_din => tx_write_din ,
-                 tx        => TX1          ,
+                 tx        => TX2_BT       ,
                  tx_ready  => tx_ready     ) ;
 
 end arc_event_system_top ;
