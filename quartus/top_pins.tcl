@@ -23,6 +23,7 @@ set_location_assignment PIN_H1  -to LEDG3
 set_location_assignment PIN_F2  -to LEDG4
 set_location_assignment PIN_V7  -to TX2_BT
 set_location_assignment PIN_U8  -to RX2_BT
+set_location_assignment PIN_W17 -to SPEAKER
 
 # DE0 supplies 3.3V to these I/O banks (schematic + DE0 User Manual) -
 # override Quartus's generic "2.5V (default)" I/O standard to match.
@@ -37,6 +38,7 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG3
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to LEDG4
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to TX2_BT
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RX2_BT
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to SPEAKER
 
 set_global_assignment -name FAMILY "Cyclone III"
 set_global_assignment -name DEVICE EP3C16F484C6

@@ -58,6 +58,14 @@
 -- and top_pins.tcl. (iOS was ruled out - HC-06 is Bluetooth       --
 -- Classic/SPP, which iOS does not expose to third-party apps      --
 -- without MFi certification.)                                    --
+--                                                               --
+-- Milestone 9: buzzer_controller wired in (project's own reduced --
+-- design, NOT the spec's per-event-type BUZZER_PATTERN opcode -   --
+-- see project memory "final product vision"). Exactly two        --
+-- triggers, both a short beep: system_enable's rising edge, and   --
+-- table_not_empty's rising edge (the first event entering an      --
+-- otherwise-empty event_table_manager table). table_not_empty is --
+-- just an OR-reduction of event_table_manager's table_used.       --
 ----------------------------------------------------------------
 library ieee ;
 use ieee.std_logic_1164.all ;
@@ -75,7 +83,8 @@ entity event_system_top is
           LEDG3    : out std_logic ; -- active slot index, bit 1
           LEDG4    : out std_logic ; -- active slot index, bit 0 (LSB)
           RX2_BT   : in  std_logic ; -- Add-On board HC-06 Bluetooth UART, FPGA receive
-          TX2_BT   : out std_logic ) ; -- Add-On board HC-06 Bluetooth UART, FPGA transmit
+          TX2_BT   : out std_logic ; -- Add-On board HC-06 Bluetooth UART, FPGA transmit
+          SPEAKER  : out std_logic ) ; -- Add-On board passive piezo buzzer
 end event_system_top ;
 
 architecture arc_event_system_top of event_system_top is
@@ -240,6 +249,17 @@ architecture arc_event_system_top of event_system_top is
              preempt_pulse  : out std_logic                                      ) ;
    end component ;
 
+   component buzzer_controller
+      generic ( clk_hz           : integer  := 50_000_000 ;
+                beep_duration_cs : positive := 20          ;
+                beep_freq_hz     : positive := 2000         ) ;
+      port ( resetN          : in  std_logic ;
+             clk             : in  std_logic ;
+             system_enable   : in  std_logic ;
+             table_not_empty : in  std_logic ;
+             buzzer_out      : out std_logic ) ;
+   end component ;
+
    component response_builder
       generic ( max_response_length : positive := 32 ) ;
       port ( resetN                 : in  std_logic                                          ;
@@ -319,6 +339,7 @@ architecture arc_event_system_top of event_system_top is
    signal table_priority    : priority_array_t(0 to 7) ;
    signal table_instance_id : instance_id_array_t(0 to 7) ;
    signal table_changed     : std_logic ;
+   signal table_not_empty   : std_logic ;
 
    signal sched_active_valid  : std_logic ;
    signal sched_active_index  : integer range 0 to 7 ;
@@ -488,6 +509,14 @@ begin
    LEDG2 <= sched_active_index_vec(2) ;
    LEDG3 <= sched_active_index_vec(1) ;
    LEDG4 <= sched_active_index_vec(0) ;
+
+   table_not_empty <= '0' when table_used = "00000000" else '1' ;
+
+   u_buzzer : buzzer_controller
+      generic map ( clk_hz => 50_000_000, beep_duration_cs => 20, beep_freq_hz => 2000 )
+      port map ( resetN => resetN, clk => CLOCK_50,
+                 system_enable => system_enable, table_not_empty => table_not_empty,
+                 buzzer_out => SPEAKER ) ;
 
    u_response_builder : response_builder
       generic map ( max_response_length => 32 )

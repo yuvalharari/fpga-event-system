@@ -843,3 +843,42 @@ tb_event_table_manager: ALL TESTS PASSED   Time: 1051 ns
 ```
 
 ---
+
+## buzzer_controller — `tb_buzzer_controller.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `buzzer_controller` does:** drives the passive piezo buzzer for
+exactly two triggers (project's own reduced design, NOT the spec's
+per-event-type `BUZZER_PATTERN` opcode - see project memory "final product
+vision"): `system_enable`'s rising edge, and `table_not_empty`'s rising
+edge (the first event entering an otherwise-empty `event_table_manager`
+table). Both produce the same short beep. Built entirely from
+course-provided blocks (`lib/course_blocks`): `gozer` (edge detection),
+`pacer` (fixed-duration beep window), `audio_gen` (actual tone generation,
+since the buzzer is passive and needs a real square wave, not just an
+on/off gate).
+
+**What the testbench checks:** since `gozer`/`pacer`/`audio_gen` are
+already trusted/proven course blocks, this testbench checks the WIRING
+logic actually written, not their internal timing:
+1. Idle/reset - `buzzer_out` stays silent.
+2. `system_enable` rising edge -> tone activity appears within the
+   expected beep window, then returns to silence (bounded duration).
+3. Holding `system_enable` at `'1'` (no new edge) -> no new beep.
+4. `table_not_empty` rising edge -> a fresh, independent beep.
+5. `table_not_empty` dropping then rising again -> another fresh beep
+   (each new edge re-triggers, not just the first-ever one).
+
+Generics overridden with small simulation-friendly values (`clk_hz=1000`)
+so a beep window is tens of clock cycles, not real seconds.
+
+**Result: ALL TESTS PASSED** — no errors, all 5 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_buzzer_controller: ALL TESTS PASSED   Time: 8091 ns
+```
+
+---
