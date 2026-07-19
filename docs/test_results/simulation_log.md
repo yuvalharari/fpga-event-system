@@ -882,3 +882,47 @@ tb_buzzer_controller: ALL TESTS PASSED   Time: 8091 ns
 ```
 
 ---
+
+## led_pattern_controller — `tb_led_pattern_controller.vhd`
+
+**Date:** 2026-07-16
+**Tool:** ModelSim ALTERA STARTER EDITION 6.5b
+
+**What `led_pattern_controller` does:** chase/marquee animation across all
+LEDs whenever an event is active (project's own reduced design, NOT the
+spec's LED0-7 meaning table or per-pattern `LED_PATTERN` opcode - see
+project memory "final product vision"). One LED lit at a time, position
+advancing every `step_period` clocks and wrapping around after
+`num_leds` steps. Speed scales with the active event's priority - the
+step period for priority N is `base_cycles / (N+1)`, so priority 7 is 8x
+faster than priority 0. The division is by a case-selected literal
+constant, resolved to plain constants at elaboration - no hardware
+divider is inferred. When inactive, all LEDs are off and the chase
+position resets to 0, so every new active event restarts the animation
+cleanly.
+
+**What the testbench checks** (generics overridden to `num_leds=4`,
+`base_cycles=80` for fast, exact cycle-accurate simulation):
+1. Inactive -> all LEDs off.
+2. Active, priority=0 (step=80) -> after 35 cycles, position hasn't
+   advanced yet (still 0) - proves the slow case.
+3. Deactivate/reactivate at priority=7 (step=10) -> after 35 cycles,
+   position has advanced exactly 3 steps (35/10=3) - proves priority
+   really speeds up the chase. (Deactivating first clears the leftover
+   `cycle_count` from the priority=0 phase - a straight priority switch
+   without resetting would leave stale count and throw the expected step
+   count off, found and fixed before running.)
+4. Fresh restart at priority=7, run exactly 4 steps (40 cycles,
+   `num_leds=4`) -> wraps back around to 0.
+5. Build up to position 2, then drop and re-raise `active_valid` -> LEDs
+   go off immediately, and position resets to 0 on reactivation rather
+   than resuming at 2.
+
+**Result: ALL TESTS PASSED** — no errors, all 5 scenarios passed,
+simulation completed and halted on its own.
+
+```
+tb_led_pattern_controller: ALL TESTS PASSED
+```
+
+---
